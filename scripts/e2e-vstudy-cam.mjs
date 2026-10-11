@@ -329,8 +329,19 @@ try {
   await p.waitForTimeout(300);
   ok(await p.locator('.cam-cover').isVisible(), '未播放时摄像头是关的（盖着「摄像头未开启」）');
   ok(await p.locator('.shot-tbl tbody tr').count() === 10, '流水表默认每页 10 行');
-  const sizeOpts = await p.locator('.shots-head select').last().locator('option').allInnerTexts();
-  ok(JSON.stringify(sizeOpts) === JSON.stringify(['5', '10', '15', '30', '50', '100']), '每页可选 5/10/15/30/50/100', sizeOpts.join(','));
+  // 每页行数下拉（v1.13.11）：原在表头（明细区），用户要求挪到表尾与翻页按钮并排
+  {
+    const footSel = p.locator('.shots-foot select');
+    ok(await p.locator('.shots-head select').count() === 1, '表头只剩「用户」一个下拉，每页行数不再杵在明细区');
+    ok(await footSel.count() === 1, '每页行数下拉在表尾 .shots-foot（和翻页在一起）');
+    const sizeOpts = await footSel.locator('option').allInnerTexts();
+    ok(JSON.stringify(sizeOpts) === JSON.stringify(['5', '10', '15', '30', '50', '100']), '每页可选 5/10/15/30/50/100', sizeOpts.join(','));
+    const tblBox = await p.locator('.shot-tbl').boundingBox();
+    const selBox = await footSel.boundingBox();
+    const nxBox = await p.locator('.shots-foot button', { hasText: '下一页' }).boundingBox();
+    ok(!!(tblBox && selBox && selBox.y >= tblBox.y + tblBox.height - 2), '每页下拉落在表格下方（不在表头）');
+    ok(!!(selBox && nxBox && Math.abs((selBox.y + selBox.height / 2) - (nxBox.y + nxBox.height / 2)) < 10), '每页下拉与上下页按钮同一条水平线');
+  }
   ok(/共 12 条 · 第 1 \/ 2 页/.test(await p.locator('.shots-foot').innerText()), '分页信息：共 12 条 · 第 1/2 页', (await p.locator('.shots-foot').innerText()).replace(/\s+/g, ' '));
   ok(await p.locator('.shot-tbl th.ck').count() === 1 && await p.locator('.shots-head .del').count() === 1, '管理员：勾选框列 + 删除按钮都在');
   // 翻页
@@ -342,7 +353,7 @@ try {
   await p.waitForFunction(() => /第 1 \/ 2 页/.test(document.querySelector('.shots-foot').innerText), null, { timeout: 5000 });
   ok(await p.locator('.shots-foot button', { hasText: '上一页' }).isDisabled(), '第 1 页「上一页」置灰');
   // 改每页行数
-  await p.locator('.shots-head select').last().selectOption('5');
+  await p.locator('.shots-foot select').selectOption('5');
   await p.waitForFunction(() => document.querySelectorAll('.shot-tbl tbody tr').length === 5, null, { timeout: 5000 });
   ok(/共 12 条 · 第 1 \/ 3 页/.test(await p.locator('.shots-foot').innerText()), '每页改 5 → 第 1/3 页', (await p.locator('.shots-foot').innerText()).replace(/\s+/g, ' '));
   // 勾选 → 删除按钮可用
@@ -445,7 +456,8 @@ try {
   await p2.locator('.mon-title').waitFor({ timeout: 10000 });
   ok(await p2.locator('.shots-head .del').count() === 0, '成员看不到「删除选中」按钮');
   ok(await p2.locator('.shot-tbl th.ck').count() === 0, '成员看不到勾选框列');
-  ok(await p2.locator('.shots-head select').count() === 1, '成员只有「每页行数」一个下拉（没有用户切换）');
+  ok(await p2.locator('.shots-head select').count() === 0, '成员表头没有任何下拉（没有用户切换）');
+  ok(await p2.locator('.shots-foot select').count() === 1, '成员只有「每页行数」一个下拉，且它在表尾');
   ok(await p2.locator('.shot-tbl tbody tr').count() === 1 && !/课程\.wav/.test(await p2.locator('.shot-tbl tbody').innerText()),
     '成员只看到自己那张（看不到管理员铺的 12 张）');
 

@@ -175,11 +175,6 @@
               </select>
               <span class="grow"></span>
               <button v-if="isAdmin" class="small del" :disabled="!shotSel.length" @click="delShots()">🗑 删除选中（{{ shotSel.length }}）</button>
-              <span class="muted">每页</span>
-              <select v-model.number="shotSize" class="mini" @change="loadShots(1)">
-                <option v-for="n in SHOT_SIZES" :key="n" :value="n">{{ n }}</option>
-              </select>
-              <span class="muted">行</span>
             </div>
             <div class="shots-wrap">
               <table class="shot-tbl">
@@ -210,8 +205,18 @@
             </div>
             <div class="shots-foot">
               <span class="muted">共 {{ shots.total }} 条 · 第 {{ shots.page }} / {{ shotPages }} 页</span>
-              <button class="small" :disabled="shots.page <= 1" @click="loadShots(shots.page - 1)">← 上一页</button>
-              <button class="small" :disabled="shots.page >= shotPages" @click="loadShots(shots.page + 1)">下一页 →</button>
+              <!-- 翻页 + 每页行数（v1.13.11）成组：原来那个「每页」下拉在表头顶着「截图流水」标题，
+                   用户说那地方是明细区、小下拉不该杵上面，已挪下来和翻页按钮并排。
+                   包一层 .pager 是为了监控栏只占 1/4 宽时这组自己换行、不和「共 N 条」黏在断行中间 -->
+              <span class="pager">
+                <button class="small" :disabled="shots.page <= 1" @click="loadShots(shots.page - 1)">← 上一页</button>
+                <button class="small" :disabled="shots.page >= shotPages" @click="loadShots(shots.page + 1)">下一页 →</button>
+                <span class="muted shot-size">每页</span>
+                <select v-model.number="shotSize" class="mini" @change="loadShots(1)">
+                  <option v-for="n in SHOT_SIZES" :key="n" :value="n">{{ n }}</option>
+                </select>
+                <span class="muted">行</span>
+              </span>
             </div>
           </div>
         </div>
@@ -874,6 +879,7 @@ onBeforeUnmount(() => {
 .shot-tbl th.op, .shot-tbl td.op { width: 48px; }
 .shot-tbl td.op a { color: var(--accent); }
 .shots-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.shots-foot .pager { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: nowrap; }
 .shots-foot button:disabled { opacity: .45; cursor: default; }
 /* 外部播放器按钮行（v1.8.7）：HEVC 10bit/4K 交给本地播放器 */
 .ext-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0 2px; }
