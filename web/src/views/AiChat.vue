@@ -2,7 +2,9 @@
   <!-- v1.12.4：原独立「AI 助手」页整页并入「人工智能」页的 llm 子 tab（改名「LLM在线模型」）。
        外层 SmartHome 已画页面标题，这里不再带自己的 page-title；组件内部逻辑原样。
        v1.13.1：接入 AI 脱敏 —— 【脱敏】按钮 + 右侧功能框（说明/规则/本轮对照关系）、
-       气泡显示脱敏进度与复原结果、【发送】改名【回传】、Ctrl+回车 = 直接勾选脱敏发送。 -->
+       气泡显示脱敏进度与复原结果、【发送】改名【回传】、Ctrl+回车 = 直接勾选脱敏发送。
+       v1.13.6：按钮改名【确定】（用户要求，不再是「回传」）；回车 = 直接发送，
+       Ctrl+回车 = 启用脱敏发送，Alt+回车 = 在输入框内换行（浏览器默认三者都不是这套行为）。 -->
   <div>
     <div class="ai-chat-layout" :class="{ 'with-panel': desensOpen }">
       <!-- 会话列表 -->
@@ -63,16 +65,18 @@
           </span>
         </div>
         <div class="row" style="align-items:stretch">
-          <textarea v-model="aiInput" rows="2" placeholder="问任何问题；或输入业务 Skill 的引导词执行任务...（Ctrl+回车 = 直接脱敏发送）" class="grow"
+          <textarea v-model="aiInput" rows="2" placeholder="问任何问题；或输入业务 Skill 的引导词执行任务...（回车 = 发送，Ctrl+回车 = 脱敏发送，Alt+回车 = 换行）" class="grow"
                     style="align-self:stretch"
-                    @keydown.ctrl.enter.prevent="sendChat(true)" @keydown.meta.enter.prevent="sendChat(true)"></textarea>
-          <!-- 三个按钮同尺寸（用户要求：附件/脱敏与回传一样大） -->
+                    @keydown.enter.exact.prevent="sendChat(false)"
+                    @keydown.ctrl.enter.prevent="sendChat(true)" @keydown.meta.enter.prevent="sendChat(true)"
+                    @keydown.alt.enter.prevent="insertLine"></textarea>
+          <!-- 三个按钮同尺寸（用户要求：附件/脱敏与【确定】一样大） -->
           <div class="ai-btns">
             <button style="align-self:stretch; white-space:nowrap" title="上传文件或图片给 AI" @click="$refs.attInput.click()" :disabled="attBusy">{{ attBusy ? '解析中...' : '📎 附件' }}</button>
             <button class="mask-btn" :class="{ on: maskOn }" style="align-self:stretch; white-space:nowrap"
                     :title="maskOn ? '本轮已勾选脱敏，点击取消（右侧说明框用 ✕ 收起）' : '勾选后，发出的内容先脱敏、回复再复原；同时展开右侧说明框'"
                     @click="toggleMask">{{ maskOn ? '🔒 脱敏 ✓' : '🔒 脱敏' }}</button>
-            <button class="primary" style="align-self:stretch; white-space:nowrap" @click="sendChat(false)" :disabled="aiBusy">回传</button>
+            <button class="primary" style="align-self:stretch; white-space:nowrap" title="发送（回车）" @click="sendChat(false)" :disabled="aiBusy">确定</button>
           </div>
           <input ref="attInput" type="file" style="display:none" @change="onAttChange" multiple />
         </div>
@@ -136,6 +140,16 @@ const mainFull = inject('wbMainFull', null);
 function toggleMask() {
   maskOn.value = !maskOn.value;
   desensOpen.value = maskOn.value;
+}
+// Alt+回车 = 在输入框内换行（v1.13.6，用户要求）。浏览器对 textarea 只有「裸回车」才插换行，
+// Alt/Shift/Ctrl 组合键都不会——所以必须自己按光标位置插一个 \n，再把光标移到换行之后，
+// 保持「接着往下打字」的手感（直接赋值 aiInput 会让光标跳到末尾）。
+function insertLine(e) {
+  const el = e.target;
+  const start = typeof el.selectionStart === 'number' ? el.selectionStart : aiInput.value.length;
+  const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : start;
+  aiInput.value = aiInput.value.slice(0, start) + '\n' + aiInput.value.slice(end);
+  nextTick(() => { el.selectionStart = el.selectionEnd = start + 1; });
 }
 function closePanel() {
   desensOpen.value = false;

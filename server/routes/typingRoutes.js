@@ -4,6 +4,7 @@
 //       （admin 始终可见，见 auth.js RESTRICTED_TABS）。
 const express = require('express');
 const { db } = require('../db');
+const penaltyService = require('../services/monitorPenaltyService'); // v1.13.5 电脑监控处罚标准
 const router = express.Router();
 
 // 奖励费率存 settings 表：打字每打对 reward_chars 个字 = reward_yuan 元；
@@ -139,8 +140,12 @@ router.get('/typing/summary', (req, res) => {
   const tc = rows.reduce((a, r) => a + r.correct, 0);
   const tw = rows.reduce((a, r) => a + r.wrong, 0);
   const ts = rows.reduce((a, r) => a + r.seconds, 0);
+  // 已兑现只算正数（登记的兑现）；负数行 = 电脑监控处罚扣款，单独统计（v1.13.5）
   const paid = db.prepare(
-    'SELECT COALESCE(SUM(amount),0) s FROM typing_payouts WHERE user_id=? AND period=?'
+    'SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
+  ).get(uid, month).s;
+  const penalty = db.prepare(
+    'SELECT COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
   ).get(uid, month).s;
   // 视频学时（按流水落账日）与练琴有效时长（按录音开始日，仅已确认）按天聚合
   const vDay = videoEffByDay(uid, month);
@@ -178,8 +183,9 @@ router.get('/typing/summary', (req, res) => {
       seconds: ts, correct: tc, wrong: tw, net: netChars(tc, tw),
       accuracy: tc + tw ? Math.round(tc / (tc + tw) * 100) : null,
       money: total, paid: Math.round(paid * 100) / 100,
+      penalty: Math.round(penalty * 100) / 100,
       advanced: Math.round(advanced * 100) / 100,
-      pending: Math.max(0, Math.round((total - paid - advanced) * 100) / 100),
+      pending: Math.max(0, Math.round((total - paid - penalty - advanced) * 100) / 100),
       typing_money: typingTotal,
       video_hist_sec: Math.max(0, vt.all_v || 0), video_month_sec: monthVideoSec,
       video_month_money: monthVideoMoney,
@@ -226,8 +232,12 @@ router.get('/typing/payouts/preview', (req, res) => {
   const agg = db.prepare(
     "SELECT COALESCE(SUM(correct),0) c, COALESCE(SUM(wrong),0) w FROM typing_days WHERE user_id=? AND day LIKE ?"
   ).get(uid, month + '-%');
+  // 已兑现 = 正数兑现之和；负数行 = 电脑监控处罚扣款（v1.13.5），单独返回给前端展示
   const paid = db.prepare(
-    'SELECT COALESCE(SUM(amount),0) s FROM typing_payouts WHERE user_id=? AND period=?'
+    'SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
+  ).get(uid, month).s;
+  const penalty = db.prepare(
+    'SELECT COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
   ).get(uid, month).s;
   const videoSec = db.prepare(
     "SELECT COALESCE(SUM(delta_sec),0) v FROM vstudy_ledger WHERE user_id=? AND strftime('%Y-%m', created_at)=?"
@@ -249,10 +259,20 @@ router.get('/typing/payouts/preview', (req, res) => {
     piano_sec: pianoSec, piano_earned: pianoEarned,
     earned,
     paid: Math.round(paid * 100) / 100,
+    penalty: Math.round(penalty * 100) / 100,
     advanced: Math.round(advanced * 100) / 100,
-    pending: Math.max(0, Math.round((earned - paid - advanced) * 100) / 100),
+    pending: Math.max(0, Math.round((earned - paid - penalty - advanced) * 100) / 100),
     config: rates,
   });
+});
+
+// ---------- 处罚标准（v1.13.5，归「兑现登记」受限 tab）：电脑监控命中预警 → 自动扣款 + 短消息 ----------
+// 与「奖励标准」同页同权限：能进兑现登记即可配置。规则/电脑/成员清单一起下发，前端一次拿全。
+router.get('/typing/payouts/penalty', (req, res) => {
+  res.json({ ...penaltyService.getConfig(), devices: penaltyService.listDevices(), users: penaltyService.listUsers() });
+});
+router.put('/typing/payouts/penalty', (req, res) => {
+  res.json(penaltyService.saveConfig(req.body || {}));
 });
 
 // 兑现记录列表（最近 200 条，含用户名/登记人名）

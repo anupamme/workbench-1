@@ -1,10 +1,11 @@
-// E2E（v1.13.1）：LLM在线模型对话的 AI 脱敏界面 + 数字人「智能家居控制」tab 的界面。
+// E2E（v1.13.1 起，v1.13.6 更新）：LLM在线模型对话的 AI 脱敏界面 + 数字人「智能家居控制」tab 的界面。
 //
 // 覆盖：
-//   A 三个按钮（附件 / 脱敏 / 回传）都在、**尺寸完全一致**、回传是原名；
+//   A 三个按钮（附件 / 脱敏 / 确定）都在、**尺寸完全一致**、发送键叫【确定】（v1.13.6 由「回传」改名）；
 //   B 点【脱敏】→ 右侧延伸出说明框（说明与原理 / 当前规则 / 本轮对照关系三个分区），✕ 能收；
 //   C Ctrl+回车 = 直接脱敏发送：用户气泡「🔒 已脱敏 N 项」、AI 气泡显示复原后的真名（无代码残留）、
 //     对照关系表列出真名 ↔ 代码；发送过程中有过程进度气泡；
+//   F 回车 = 直接发送、Alt+回车 = 在输入框内换行（v1.13.6，用户要求——浏览器默认两者都不是这套行为）；
 //   D 数字人 →「智能家居控制」子页签可用（**零数字人时也在**，因为它不属于任何角色）；
 //   E 全程无 JS 报错。
 // 隔离 DATA_DIR 起服务；AI 是本地桩（只回代码，真名只可能是服务端复原出来的）。
@@ -104,17 +105,19 @@ try {
   await p.goto(`${B}/#/smart-home?tab=llm`, { waitUntil: 'domcontentloaded' });
   await p.waitForSelector('.ai-btns button', { timeout: 20000 });
   const btns = p.locator('.ai-btns button');
-  ok(await btns.count() === 3, 'A1 输入区右侧正好三个按钮（附件 / 脱敏 / 回传）');
+  ok(await btns.count() === 3, 'A1 输入区右侧正好三个按钮（附件 / 脱敏 / 确定）');
   const labels = await btns.allInnerTexts();
-  ok(labels.some((t) => t.includes('附件')) && labels.some((t) => t.includes('脱敏')) && labels.includes('回传'),
-    'A2 文案：📎 附件 / 🔒 脱敏 / 回传（发送已改名）', JSON.stringify(labels));
+  ok(labels.some((t) => t.includes('附件')) && labels.some((t) => t.includes('脱敏')) && labels.includes('确定'),
+    'A2 文案：📎 附件 / 🔒 脱敏 / 确定（v1.13.6 由「回传」改名）', JSON.stringify(labels));
+  ok(!labels.some((t) => t.includes('回传')), 'A2b 界面上不再有「回传」二字', JSON.stringify(labels));
   const boxes = [];
   for (let i = 0; i < 3; i++) boxes.push(await btns.nth(i).boundingBox());
   const hs = boxes.map((b) => Math.round(b.height)), ws = boxes.map((b) => Math.round(b.width));
   ok(new Set(hs).size === 1 && new Set(ws).size === 1,
     'A3 三个按钮尺寸完全一致（附件不再是小按钮）', `h=${hs.join(',')} w=${ws.join(',')}`);
   const ph = await p.locator('.ai-chat-main textarea').getAttribute('placeholder');
-  ok(/Ctrl\+回车/.test(ph || ''), 'A4 占位文字写明 Ctrl+回车 = 直接脱敏发送', ph);
+  ok(/回车 = 发送/.test(ph || '') && /Ctrl\+回车/.test(ph || '') && /Alt\+回车/.test(ph || ''),
+    'A4 占位文字写明三档：回车 = 发送 / Ctrl+回车 = 脱敏发送 / Alt+回车 = 换行', ph);
 
   // ---------- B. 点【脱敏】→ 右侧功能框 ----------
   ok(await p.locator('.desens-panel').count() === 0, 'B1 初始右侧没有功能框');
@@ -161,6 +164,20 @@ try {
   await p.locator('.desens-panel .icon-btn').click();
   await p.waitForTimeout(200);
   ok(await p.locator('.desens-panel').count() === 0, 'C7 ✕ 能收起功能框');
+
+  // ---------- F. 回车 = 发送 / Alt+回车 = 换行（v1.13.6）----------
+  const ta = p.locator('.ai-chat-main textarea');
+  await ta.click();
+  await ta.type('新消息第一行');
+  await p.keyboard.press('Alt+Enter');
+  ok((await ta.inputValue()) === '新消息第一行\n', 'F1 Alt+回车在输入框里换行、不发送', JSON.stringify(await ta.inputValue()));
+  await ta.type('新消息第二行');
+  ok((await ta.inputValue()) === '新消息第一行\n新消息第二行', 'F2 换行后能接着往下打（光标停在换行后，没跳到末尾）', JSON.stringify(await ta.inputValue()));
+  await p.keyboard.press('Enter');
+  ok((await ta.inputValue()) === '', 'F3 裸回车直接发送（输入框立刻清空）');
+  await p.waitForFunction(() => /新消息第一行/.test(document.querySelector('.ai-chat-body')?.innerText || ''), null, { timeout: 10000 }).catch(() => {});
+  const bodyText2 = await p.locator('.ai-chat-body').innerText();
+  ok(bodyText2.includes('新消息第一行\n新消息第二行'), 'F4 两行以一条消息原样发出（换行保留）', bodyText2.replace(/\n/g, ' | ').slice(-120));
 
   // ---------- D. 数字人 → 智能家居控制 ----------
   await p.goto(`${B}/#/smart-home?tab=dh`, { waitUntil: 'domcontentloaded' });

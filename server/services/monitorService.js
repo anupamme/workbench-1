@@ -11,6 +11,7 @@ const storagePaths = require('./storagePaths');
 const messageService = require('./messageService');
 const dingtalkService = require('./dingtalkService');
 const aiService = require('./aiService');
+const penaltyService = require('./monitorPenaltyService'); // v1.13.5 处罚标准联动（负数兑现 + 短消息）
 
 const CFG_KEY = 'monitor_cfg';
 const DEFAULT_CFG = {
@@ -250,31 +251,43 @@ function firstAdminId() {
 }
 
 // 预警检查（每张分析完的截图）：keywords/alert_users/alert_cooldown 均取该设备生效配置（v1.4.8 设备级覆盖）。
-// 命中即双通道推送：站内信（messageService 自动转钉钉文字）+ 截图本体经钉钉「工作通知」发图（需配置 AgentId）
+// 命中即双通道推送：站内信（messageService 自动转钉钉文字）+ 截图本体经钉钉「工作通知」发图（需配置 AgentId）。
+// v1.13.5：命中同时触发「兑现登记 → 处罚标准」联动（扣款进兑现流水 + 短消息）。
+// 注意：关键字命中判定与 alert_users 无关——只配了处罚标准、没配「预警推送给」也要能罚（否则静默失效）。
 function alertCheck(device, eff, buf, shotId, ts, text) {
-  if (!eff.keywords.length || !eff.alert_users.length) return;
-  const now = Date.now();
+  if (!eff.keywords.length) return;
   const hits = eff.keywords.filter((kw) => text.includes(kw));
   if (!hits.length) return;
   // 命中过预警的截图打标：保留期清理永不删除（只能手动删），推送是否在冷却期不影响打标
   if (shotId) db.prepare('UPDATE monitor_shots SET alert_hit=1 WHERE id=?').run(shotId);
+  const now = Date.now();
   for (const kw of hits) {
     const key = device.id + '|' + kw;
     const last = alertLast.get(key) || 0;
-    if (now - last < eff.alert_cooldown * 60000) continue; // 冷却期内不重复推
+    if (now - last < eff.alert_cooldown * 60000) continue; // 冷却期内不重复推（也不重复扣款）
     alertLast.set(key, now);
-    const subject = `电脑监控预警：${device.name} 命中「${kw}」`;
-    const content = `【${device.name}】${ts} 的屏幕截图命中预警关键字「${kw}」。\nAI 概括：${text.slice(0, 300)}\n（截图已通过钉钉工作消息推送）`;
-    for (const uid of eff.alert_users) {
-      try {
-        messageService.send(db, { from_user: firstAdminId(), to_user: uid, subject, content, module: 'monitor' });
-      } catch (e) { console.warn('[monitor] 预警消息发送失败:', e.message); }
-      // 截图经钉钉工作通知发图（异步自兜底；未绑定/未配 AgentId 静默跳过，文字仍送达）
-      if (buf && buf.length) {
-        dingtalkService.notifyUserImageBuf(db, uid, buf, 'image/jpeg')
-          .catch((e) => console.warn(`[monitor] 预警截图钉钉推送失败(用户${uid}):`, e.message));
+    // ① 站内信 + 钉钉发图（原有；没配「预警推送给」就只打标+扣款，不发预警消息）
+    if (eff.alert_users.length) {
+      const subject = `电脑监控预警：${device.name} 命中「${kw}」`;
+      const content = `【${device.name}】${ts} 的屏幕截图命中预警关键字「${kw}」。\nAI 概括：${text.slice(0, 300)}\n（截图已通过钉钉工作消息推送）`;
+      for (const uid of eff.alert_users) {
+        try {
+          messageService.send(db, { from_user: firstAdminId(), to_user: uid, subject, content, module: 'monitor' });
+        } catch (e) { console.warn('[monitor] 预警消息发送失败:', e.message); }
+        // 截图经钉钉工作通知发图（异步自兜底；未绑定/未配 AgentId 静默跳过，文字仍送达）
+        if (buf && buf.length) {
+          dingtalkService.notifyUserImageBuf(db, uid, buf, 'image/jpeg')
+            .catch((e) => console.warn(`[monitor] 预警截图钉钉推送失败(用户${uid}):`, e.message));
+        }
       }
     }
+    // ② 处罚标准联动：按「兑现登记」里配的规则登记负数兑现 + 发短消息（规则/开关没配 = 空跑）
+    try {
+      const applied = penaltyService.applyPenalty({
+        deviceId: device.id, deviceName: device.name, keyword: kw, aiText: text, ts,
+      });
+      for (const a of applied) console.log(`[monitor] 处罚扣款：${a.user_name} -${a.amount} 元（${device.name} 命中「${kw}」）`);
+    } catch (e) { console.warn('[monitor] 处罚登记失败:', e.message); }
   }
 }
 

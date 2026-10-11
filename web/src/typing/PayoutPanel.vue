@@ -28,6 +28,7 @@
         <br>
         应得合计 <b>¥{{ num(preview.earned) }}</b> · 已兑现 <b>¥{{ num(preview.paid) }}</b>
         <template v-if="preview.advanced > 0"> · 已赊账 <b class="hot">¥{{ num(preview.advanced) }}</b></template>
+        <template v-if="preview.penalty > 0"> · 处罚扣款 <b class="hot">-¥{{ num(preview.penalty) }}</b></template>
         · 待兑现 <b class="hot">¥{{ num(preview.pending) }}</b>
         <a v-if="preview.pending > 0" class="mini-link" @click="form.amount = preview.pending">填入待兑现金额</a>
       </div>
@@ -54,6 +55,58 @@
         <button class="primary" :disabled="savingRate || !rateChars || !rateYuan || !rateVMin || !rateVYuan || !ratePHours || !ratePYuan" @click="saveRate">保存标准</button>
       </div>
       <div v-if="rateMsg" class="po-msg" :class="rateMsgType">{{ rateMsg }}</div>
+    </div>
+
+    <!-- 处罚标准（v1.13.5）：电脑监控命中预警关键字 → 自动在兑现流水登记负数扣款 + 发短消息 -->
+    <div class="po-card">
+      <h3>处罚标准 <span class="muted">（电脑监控命中「预警关键字」→ 自动扣款并推短消息）</span></h3>
+      <div class="muted" style="font-size:12px; margin-bottom:10px; line-height:1.7">
+        「效率工具 → 电脑监控」的屏幕 AI 分析文字命中「预警关键字」时，按下面规则自动在「兑现记录」里登记一笔
+        <b>负数兑现（处罚扣款）</b>，并给指定成员发一条「短消息」。<br>
+        备注写明《预警违法电脑使用规定，扣减X元》，后接处罚标准说明与 AI 分析原文。<br>
+        兑现记录合计本来就为 0 时，扣完直接变成<b>欠账的负值</b>；「待兑现」= 应得合计 − 已兑现 − 处罚扣款 − 已赊账。
+      </div>
+      <label style="display:inline-flex; align-items:center; gap:8px; font-size:13.5px; margin-bottom:10px; cursor:pointer">
+        <input v-model="penalty.enabled" type="checkbox" style="width:auto">
+        <b>启用处罚标准</b>
+      </label>
+      <div v-for="(r, i) in penalty.rules" :key="i" class="pen-rule">
+        <div class="pen-head">
+          <b>规则 {{ i + 1 }}</b>
+          <span class="grow"></span>
+          <a class="mini-link" @click="removeRule(i)">删除</a>
+        </div>
+        <div class="rate-line">
+          电脑：
+          <select v-model="r.device_id" style="min-width:150px">
+            <option value="">请选择被监控的电脑</option>
+            <option v-for="d in penalty.devices" :key="d.id" :value="d.id">{{ d.name }}</option>
+          </select>
+          <span v-if="!penalty.devices.length" class="muted">（还没有电脑接入监控，「效率工具 → 电脑监控」里先装代理）</span>
+          · 每次扣减
+          <input v-model.number="r.amount" type="number" min="0.01" step="0.5"> 元
+        </div>
+        <div class="rate-line">
+          扣减成员：
+          <select v-model.number="r.deduct_user_id" style="min-width:150px">
+            <option :value="0">请选择扣谁的账</option>
+            <option v-for="u in penalty.users" :key="u.id" :value="u.id">{{ uname(u) }}</option>
+          </select>
+          <span class="cur">（在「兑现记录」里记为 -X 元）</span>
+        </div>
+        <div class="rate-line">
+          推送成员：
+          <UserPicker v-model="r.push_user_ids" :users="penalty.users" multiple placeholder="搜索并选择要通知的成员（可多选）" style="flex:1; max-width:420px" />
+          <span class="cur">（发「短消息」）</span>
+        </div>
+      </div>
+      <div v-if="!penalty.rules.length" class="muted" style="font-size:13px; margin-bottom:10px">还没有规则——点下面「＋ 添加处罚规则」开始配置。</div>
+      <div class="row" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+        <button class="small" @click="addRule">＋ 添加处罚规则</button>
+        <button class="primary" :disabled="savingPenalty" @click="savePenalty">保存处罚标准</button>
+        <span class="cur muted" style="font-size:12.5px">每台电脑一条规则；命中后同设备同关键字在监控的「预警冷却」时间内只扣一次。</span>
+      </div>
+      <div v-if="penaltyMsg" class="po-msg" :class="penaltyMsgType">{{ penaltyMsg }}</div>
     </div>
 
     <!-- ============ 赊账兑换登记 ============ -->
@@ -141,7 +194,11 @@
     </div>
 
     <div class="po-card">
-      <h3>兑现记录</h3>
+      <h3>兑现记录
+        <span class="muted">（负数行 = 电脑监控处罚扣款；合计为负 = 欠账）</span>
+        <span class="grow"></span>
+        <span class="muted">合计 <b :class="listNet < 0 ? 'neg-money' : 'ok-money'">¥{{ listNet.toFixed(2) }}</b>{{ listNet < 0 ? '（欠账）' : '' }}</span>
+      </h3>
       <table class="po-table">
         <thead>
           <tr><th>时间</th><th>成员</th><th>月份</th><th>金额</th><th>备注</th><th>登记人</th><th></th></tr>
@@ -151,8 +208,11 @@
             <td>{{ p.created_at }}</td>
             <td>{{ p.user_name }}</td>
             <td>{{ p.period }}</td>
-            <td class="ok">¥{{ Number(p.amount).toFixed(2) }}</td>
-            <td class="note">{{ p.note || '—' }}</td>
+            <td :class="p.amount < 0 ? 'neg-money' : 'ok'">
+              {{ p.amount < 0 ? '-¥' + Math.abs(Number(p.amount)).toFixed(2) : '¥' + Number(p.amount).toFixed(2) }}
+              <span v-if="p.amount < 0" class="badge wait">处罚</span>
+            </td>
+            <td class="note" :title="p.note || ''">{{ p.note || '—' }}</td>
             <td>{{ p.created_by_name }}</td>
             <td><a v-if="canDelete(p)" class="del" @click="remove(p)">删除</a></td>
           </tr>
@@ -171,6 +231,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { api } from '../api';
+import UserPicker from '../components/UserPicker.vue';
 
 const me = JSON.parse(localStorage.getItem('wb_user') || 'null');
 const isAdmin = !!me && me.role === 'admin';
@@ -234,6 +295,44 @@ async function saveRate() {
   savingRate.value = false;
   setTimeout(() => { rateMsg.value = ''; }, 3000);
 }
+
+// ---------- 处罚标准（v1.13.5）：电脑监控命中预警 → 自动扣款 + 短消息 ----------
+// 规则 = 一台被监控电脑 + 每次扣减金额 + 扣减成员 + 推送成员（可多选）。
+const penalty = ref({ enabled: true, rules: [], devices: [], users: [] });
+const savingPenalty = ref(false);
+const penaltyMsg = ref('');
+const penaltyMsgType = ref('ok');
+const uname = (u) => (u && (u.display_name || u.nickname || u.username)) || `用户#${u && u.id}`;
+async function loadPenalty() {
+  try {
+    const r = await api.get('/typing/payouts/penalty');
+    penalty.value = { enabled: r.enabled !== false, rules: r.rules || [], devices: r.devices || [], users: r.users || [] };
+  } catch { /* 无权限时不显示规则（卡片本身仍渲染，走保存报错） */ }
+}
+function addRule() {
+  penalty.value.rules.push({ device_id: penalty.value.devices[0] ? penalty.value.devices[0].id : '', amount: 5, deduct_user_id: 0, push_user_ids: [] });
+}
+function removeRule(i) { penalty.value.rules.splice(i, 1); }
+async function savePenalty() {
+  if (savingPenalty.value) return;
+  savingPenalty.value = true;
+  try {
+    const r = await api.put('/typing/payouts/penalty', { enabled: penalty.value.enabled, rules: penalty.value.rules });
+    penalty.value = { enabled: r.enabled !== false, rules: r.rules || [], devices: r.devices || [], users: r.users || [] };
+    const n = penalty.value.rules.length;
+    penaltyMsg.value = penalty.value.enabled
+      ? `处罚标准已保存（${n} 条规则生效；无效/不存在的电脑与成员会被自动丢弃）`
+      : '已保存，但「启用处罚标准」未勾选——当前不会自动扣款';
+    penaltyMsgType.value = 'ok';
+  } catch (e) {
+    penaltyMsg.value = e.message;
+    penaltyMsgType.value = 'err';
+  }
+  savingPenalty.value = false;
+  setTimeout(() => { penaltyMsg.value = ''; }, 4000);
+}
+// 兑现记录合计（含处罚负数行），为负 = 欠账
+const listNet = computed(() => list.value.reduce((s, p) => s + (Number(p.amount) || 0), 0));
 
 async function loadUsers() {
   users.value = await api.get('/typing/payouts/users');
@@ -385,7 +484,7 @@ const num = (v) => Number(v || 0).toFixed(2);
 
 watch(() => [form.user_id, form.period], loadPreview);
 onMounted(async () => {
-  await Promise.all([loadUsers(), loadRate()]);
+  await Promise.all([loadUsers(), loadRate(), loadPenalty()]);
   await Promise.all([loadList(), loadPreview(), loadCredit(1)]);
 });
 </script>
@@ -416,6 +515,11 @@ onMounted(async () => {
 .po-msg.ok { color: var(--green); }
 .po-msg.err { color: var(--red); }
 .hint { margin-top: 8px; font-size: 12px; color: var(--red); }
+.pen-rule { border: 1px dashed var(--border); border-radius: 10px; padding: 10px 12px 4px; margin-bottom: 10px; background: var(--bg3); }
+.pen-head { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 8px; }
+.pen-rule .rate-line { margin-bottom: 8px; }
+.pen-rule select { background: var(--bg2); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; font-size: 13px; }
+.ok-money { color: var(--green); }
 .img-pick { display: inline-flex; align-items: center; gap: 8px; }
 .thumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; cursor: pointer; border: 1px solid var(--border); }
 .pick-btn { background: var(--bg3); color: var(--text3); border: 1px dashed var(--border); border-radius: 8px; padding: 9px 14px; font-size: 12.5px; cursor: pointer; }

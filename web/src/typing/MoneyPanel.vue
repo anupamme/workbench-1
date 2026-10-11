@@ -22,6 +22,7 @@
       <div class="mn-card vio"><b>{{ fmtDur(totals.piano_valid_sec) }}</b><span>练琴有效时长</span></div>
       <div class="mn-card gold"><b :class="{ neg: totals.money < 0 }">¥{{ (totals.money ?? 0).toFixed(2) }}</b><span>本月奖励（打字+视频+练琴）</span></div>
       <div class="mn-card"><b>¥{{ (totals.paid ?? 0).toFixed(2) }}</b><span>已兑现</span></div>
+      <div v-if="(totals.penalty ?? 0) > 0" class="mn-card"><b class="neg">-¥{{ (totals.penalty ?? 0).toFixed(2) }}</b><span>本月处罚扣款</span></div>
       <div class="mn-card hot"><b>¥{{ (totals.pending ?? 0).toFixed(2) }}</b><span>待兑现</span></div>
     </div>
 
@@ -47,6 +48,9 @@
       <template v-if="(totals.advanced ?? 0) > 0">
         <span class="adv">本月已赊账 ¥{{ totals.advanced.toFixed(2) }}（计入待兑现扣减）</span>
       </template>
+      <template v-if="(totals.penalty ?? 0) > 0">
+        <span class="adv">本月电脑监控处罚扣款 -¥{{ totals.penalty.toFixed(2) }}（计入待兑现扣减，在「兑现登记 → 兑现记录」）</span>
+      </template>
     </div>
   </div>
 </template>
@@ -64,7 +68,7 @@ const month = ref(nowMonth);
 const uid = ref(myId || 0);
 const users = ref(null);
 const daysMap = ref({});
-const totals = ref({ seconds: 0, correct: 0, net: 0, money: 0, paid: 0, advanced: 0, pending: 0,
+const totals = ref({ seconds: 0, correct: 0, net: 0, money: 0, paid: 0, penalty: 0, advanced: 0, pending: 0,
   video_hist_sec: 0, video_month_sec: 0, piano_total_sec: 0, piano_month_sec: 0, piano_valid_sec: 0 });
 const config = ref({ reward_chars: 100, reward_yuan: 2, video_reward_minutes: 60, video_reward_yuan: 1, piano_reward_hours: 1, piano_reward_yuan: 3 });
 
@@ -111,7 +115,7 @@ async function load() {
   const map = {};
   (d.days || []).forEach((x) => { map[x.day] = x; });
   daysMap.value = map;
-  totals.value = { seconds: 0, correct: 0, net: 0, money: 0, paid: 0, advanced: 0, pending: 0, ...(d.totals || {}) };
+  totals.value = { seconds: 0, correct: 0, net: 0, money: 0, paid: 0, penalty: 0, advanced: 0, pending: 0, ...(d.totals || {}) };
   config.value = { reward_chars: 100, reward_yuan: 2, video_reward_minutes: 60, video_reward_yuan: 1, piano_reward_hours: 1, piano_reward_yuan: 3, ...(d.config || {}) };
   users.value = d.users || null;
   if (!uid.value) uid.value = d.user_id;
