@@ -250,8 +250,9 @@ try {
   console.log('— UI：小窗 + 流水表 + 分页 + 权限按钮');
   const { chromium } = await import('playwright');
   browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
-  // 1760 宽 = 大屏口径（≥1600 才三列并排：目录树 | 播放+文档 | 监控列）
-  const ctx = await browser.newContext({ viewport: { width: 1760, height: 1000 } });
+  // 1536 = **用户的真实窗口**（1920×1080 显示器 + Windows 125% 缩放 → 浏览器 CSS 宽度 1920÷1.25）
+  // v1.13.10 的回归点：上一版在 ≤1600 时把监控列换行压到下面，正好被这个宽度命中
+  const ctx = await browser.newContext({ viewport: { width: 1536, height: 864 } });
   await ctx.grantPermissions(['camera'], { origin: B });
   await ctx.addInitScript(([t, u]) => { localStorage.setItem('wb_token', t); localStorage.setItem('wb_user', u); }, [T, JSON.stringify(lg.j.user || lg.j.b?.user)]);
   const p = await ctx.newPage();
@@ -290,16 +291,41 @@ try {
     '文档预览区仍在播放区正下方、且与播放区同宽（没被流水挤窄）', `文档 ${dbox && Math.round(dbox.width)}px @y=${dbox && Math.round(dbox.y)} / 播放 ${zbox && Math.round(zbox.width)}px`);
   // 本页不再封在 .main 的 1200px 里（大屏右侧那条本来白空着，现在归学习监控列用）
   ok(await p.locator('.main.main-full').count() === 1, '本页放开了 1200px 宽度上限（main-full）');
-  ok(mbox && mbox.x + mbox.width >= 1760 - 70,
-    '监控列一直铺到窗口右边缘（右侧空白已被利用）', `监控列右边缘 ${mbox && Math.round(mbox.x + mbox.width)} / 窗口 1760`);
-  // 窗口不够宽时（笔记本）监控列整体落到最下方，不横向挤压播放区
-  await p.setViewportSize({ width: 1440, height: 900 });
+  ok(mbox && mbox.x + mbox.width >= 1536 - 70,
+    '监控列一直铺到窗口右边缘（右侧空白已被利用）', `监控列右边缘 ${mbox && Math.round(mbox.x + mbox.width)} / 窗口 1536`);
+  // v1.13.10：三栏比例 = 目录 1/4 ｜ 播放 + 文档 2/4 ｜ 监控 1/4（用户点名的口径）
+  {
+    const tbox = await p.locator('.tree').boundingBox();
+    const vbox = await p.locator('.vs-main').boundingBox();
+    const total = (tbox && tbox.width || 0) + (vbox && vbox.width || 0) + (mbox && mbox.width || 0);
+    const pct = (w) => Math.round((w / total) * 1000) / 10;
+    const pt = pct(tbox ? tbox.width : 0), pv = pct(vbox ? vbox.width : 0), pm = pct(mbox ? mbox.width : 0);
+    ok(total > 0 && Math.abs(pt - 25) <= 3 && Math.abs(pm - 25) <= 3 && Math.abs(pv - 50) <= 3,
+      '三栏比例 ≈ 目录 25% ｜ 播放+文档 50% ｜ 监控 25%',
+      `目录 ${pt}% / 主区 ${pv}% / 监控 ${pm}%（间隙 12px×2 会让主区略低于 50%）`);
+  }
+  // v1.13.10 回归点：**窄窗口也必须三栏并排**——上一版在 ≤1600 就把监控列换行压到最下面，
+  // 而 1920×1080 + Windows 125% 缩放的浏览器 CSS 宽度正好是 1536，用户就是这么被坑的
+  for (const w of [1536, 1180]) {
+    await p.setViewportSize({ width: w, height: 864 });
+    await p.waitForTimeout(300);
+    const m2 = await p.locator('.monitor').boundingBox();
+    const z2 = await p.locator('.player-zone').boundingBox();
+    ok(m2 && z2 && m2.x >= z2.x + z2.width - 1 && m2.y < z2.y + z2.height,
+      `窗口 ${w}：监控列仍常驻在播放区右侧（没有掉到下面）`,
+      `小窗 x=${m2 && Math.round(m2.x)} vs 播放区右边缘 ${z2 && Math.round(z2.x + z2.width)}，y=${m2 && Math.round(m2.y)}`);
+  }
+  // 再窄也不许换行：三栏一起等比缩（宁可都窄，也不让监控跑到下面）
+  await p.setViewportSize({ width: 900, height: 800 });
   await p.waitForTimeout(300);
-  const mbox2 = await p.locator('.monitor').boundingBox();
-  const zbox2 = await p.locator('.player-zone').boundingBox();
-  ok(mbox2 && zbox2 && mbox2.y >= zbox2.y + zbox2.height - 1 && mbox2.width >= zbox2.width * 0.98,
-    '窄窗口（1440）：监控列整体落到播放区下方（不横向挤压）', `小窗 y=${mbox2 && Math.round(mbox2.y)} / 播放区下边缘 ${zbox2 && Math.round(zbox2.y + zbox2.height)}`);
-  await p.setViewportSize({ width: 1760, height: 1000 });
+  {
+    const m3 = await p.locator('.monitor').boundingBox();
+    const z3 = await p.locator('.player-zone').boundingBox();
+    ok(m3 && z3 && m3.x >= z3.x + z3.width - 1,
+      '窗口 900（很窄）：依旧三栏并排，只是每栏都变窄',
+      `小窗 x=${m3 && Math.round(m3.x)} vs 播放区右边缘 ${z3 && Math.round(z3.x + z3.width)}`);
+  }
+  await p.setViewportSize({ width: 1536, height: 864 });
   await p.waitForTimeout(300);
   ok(await p.locator('.cam-cover').isVisible(), '未播放时摄像头是关的（盖着「摄像头未开启」）');
   ok(await p.locator('.shot-tbl tbody tr').count() === 10, '流水表默认每页 10 行');

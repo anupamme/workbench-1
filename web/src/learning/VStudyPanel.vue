@@ -144,7 +144,7 @@
           </div>
         </div>
 
-        <!-- 学习监控栏位（v1.13.8 建、v1.13.9 拆成独立栏）：页面最右侧那一整条的空白正好用上——
+        <!-- 学习监控栏位（v1.13.8 建、v1.13.9 拆成独立栏、v1.13.10 固定占 1/4 且永不换行）：页面最右侧那一整条的空白正好用上——
              上面是摄像头小窗，下面就是截图流水；**不占播放区的宽度，也不压住下方的文档预览区**。
              v1.13.9 起摄像头由自己的开关「摄像头监控」控制，与「注意力检测」各自独立、互不联动 -->
         <div class="card mon-col">
@@ -828,24 +828,28 @@ onBeforeUnmount(() => {
 .vs-head .cur { font-size: 14.5px; font-weight: 600; }
 .lb { margin-left: auto; font-size: 11.5px; padding: 2px 10px; border-radius: 10px; border: 1px solid var(--border); color: var(--text3); }
 .lb.ok { color: var(--green); border-color: var(--green); }
-.vs-body { display: flex; gap: 12px; align-items: stretch; }
-.tree { width: 18%; min-width: 200px; max-width: 340px; max-height: 72vh; overflow: auto; padding: 10px; }
+/* 三栏永久并排（v1.13.10）：目录 1/4 ｜ 播放 + 文档 2/4 ｜ 学习监控 1/4。
+   **不设断点、不换行**——上一版留的 `@media (max-width:1600px) 换行` 在 1920×1080 的机器上被
+   Windows 125% 缩放坑了：浏览器拿到的 CSS 宽度只有 1536（1920÷1.25），照样掉进「窄屏」，监控栏
+   被压到最下面。用户要的是「常驻在右边」，那就按比例分，窄了大家一起窄，谁也不许跑下去。 */
+.vs-body { display: flex; flex-wrap: nowrap; gap: 12px; align-items: stretch; }
+.tree { flex: 0 0 25%; min-width: 0; max-height: 72vh; overflow: auto; padding: 10px; }
 .tree-root { font-weight: 600; padding: 5px 6px; cursor: pointer; border-radius: 6px; }
 .tree-root:hover { background: var(--bg3); }
 .tree-children { margin-left: 6px; }
-.vs-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.vs-main { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .zone { display: flex; flex-direction: column; }
 .zone-head { display: flex; align-items: center; gap: 10px; font-size: 13.5px; margin-bottom: 8px; }
 .zone-head .grow { flex: 1; }
 .zone-body { display: flex; gap: 12px; align-items: flex-start; }
 .player-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .player-col video { width: 100%; max-height: 56vh; background: #000; border-radius: 8px; }
-/* 学习监控栏（v1.13.9）：从播放卡片里搬出来，独占页面最右一列（大屏上原本空着的那条）。
-   摄像头小窗在上、截图流水在下；**宽度由这一列决定，不再从播放区里抢宽度，也不压住下方文档预览区** */
-.mon-col { flex: 0 0 28%; min-width: 360px; max-width: 620px; align-self: flex-start; display: flex; flex-direction: column; gap: 10px; }
+/* 学习监控栏（v1.13.9 建、v1.13.10 固定占 1/4 且永不换行）：从播放卡片里搬出来，独占页面最右一列。
+   摄像头小窗在上、截图流水在下；**宽度就是这条 1/4 列，不从播放区里抢宽度，也不压住下方文档预览区** */
+.mon-col { flex: 0 0 25%; min-width: 0; align-self: flex-start; display: flex; flex-direction: column; gap: 10px; }
 .monitor { display: flex; flex-direction: column; gap: 8px; }
 .mon-title { font-size: 13.5px; font-weight: 600; }
-.cam-box { position: relative; width: 100%; max-width: 520px; aspect-ratio: 4 / 3; background: #111; border-radius: 8px; overflow: hidden; }
+.cam-box { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #111; border-radius: 8px; overflow: hidden; }
 .cam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); } /* 镜像：像照镜子，符合直觉 */
 .cam.hide { visibility: hidden; }
 .cam-cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px; text-align: center; background: var(--bg3); }
@@ -871,14 +875,6 @@ onBeforeUnmount(() => {
 .shot-tbl td.op a { color: var(--accent); }
 .shots-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .shots-foot button:disabled { opacity: .45; cursor: default; }
-/* 不够宽的窗口（笔记本 1500 宽也在此列）兜底：监控列整列落到最下方，回到「播放 → 文档 → 监控」的竖排，
-   宁可把监控压到下面，也不横向挤压播放区与文档预览区；三列并排只在 ≥1600 宽的大屏上生效 */
-@media (max-width: 1600px) {
-  .vs-body { flex-wrap: wrap; }
-  .tree { flex: 1 1 220px; }
-  .mon-col { flex: 1 1 100%; max-width: none; }
-  .cam-box { max-width: 480px; }
-}
 /* 外部播放器按钮行（v1.8.7）：HEVC 10bit/4K 交给本地播放器 */
 .ext-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0 2px; }
 .ext-row .ext-tip { font-size: 12px; }
