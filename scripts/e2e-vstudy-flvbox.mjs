@@ -176,10 +176,10 @@ try {
   await n1.click();
   await p.locator('.row.media', { hasText: '伪装成flv的mp4.flv' }).first().waitFor({ timeout: 10000 });
 
-  const srcOf = () => p.locator('.player-zone video').evaluate((v) => v.src || '');
+  const srcOf = () => p.locator('.player-col video').evaluate((v) => v.src || '');
   // ④-1 伪装成 flv 的 mp4 → 原生通道
   await p.locator('.row.media', { hasText: '伪装成flv的mp4.flv' }).first().click();
-  await p.waitForFunction(() => { const v = document.querySelector('.player-zone video'); return !!(v && v.src); }, null, { timeout: 10000 }).catch(() => {});
+  await p.waitForFunction(() => { const v = document.querySelector('.player-col video'); return !!(v && v.src); }, null, { timeout: 10000 }).catch(() => {});
   const s1 = decodeURIComponent(await srcOf());
   ok(s1.includes('path=初一/伪装成flv的mp4.flv') && !s1.startsWith('blob:'),
     '伪装成 flv 的 MP4 走原生 <video>（src = 文件 URL，不是 blob:）', s1.slice(-60));
@@ -189,7 +189,7 @@ try {
     '伪装文件没被当成其它容器拦下（走原生通道，非 flv.js）');
   // ④-2 真 FLV → flv.js（MSE 的 blob URL）
   await p.locator('.row.media', { hasText: '真flv.flv' }).first().click();
-  await p.waitForFunction(() => { const v = document.querySelector('.player-zone video'); return !!(v && v.src.startsWith('blob:')); }, null, { timeout: 10000 }).catch(() => {});
+  await p.waitForFunction(() => { const v = document.querySelector('.player-col video'); return !!(v && v.src.startsWith('blob:')); }, null, { timeout: 10000 }).catch(() => {});
   ok((await srcOf()).startsWith('blob:'), '真 FLV 交给 flv.js（src 是 MSE 的 blob URL）', (await srcOf()).slice(0, 40));
   // ④-3 HEVC 的 FLV → 明说原因，不再空转
   await p.locator('.row.media', { hasText: 'hevc的flv.flv' }).first().click();

@@ -92,7 +92,7 @@
         </div>
 
         <div class="vs-main">
-          <!-- 右上：视频 / 音频播放器 -->
+          <!-- 右上：视频 / 音频播放器 + 右侧「学习监控状态」小窗 -->
           <div class="card zone player-zone">
             <div v-if="curMedia" class="zone-head">
               🎬 {{ curMedia.name }}
@@ -100,21 +100,93 @@
               <span class="grow"></span>
               <button class="small" @click="closeMedia">✕ 关闭</button>
             </div>
-            <video v-show="curMedia && !mediaIssue" ref="videoEl" controls controlslist="nodownload" preload="auto" @timeupdate="onTimeUpdate" @play="onPlayStart" @pause="flushMedia" @ended="onEnded" @error="onVideoError"></video>
-            <!-- 播不了时如实说清原因（真实容器 / 编码），按钮行仍在，可直接转外部播放器 -->
-            <div v-if="mediaIssue" class="media-issue">
-              <b>⚠️ 这个文件浏览器播不了</b>
-              <span>{{ mediaIssue }}</span>
-              <span class="muted">下面是外部播放器按钮，PotPlayer / VLC 能原样打开服务器上的这个文件。</span>
+            <div class="zone-body">
+              <div class="player-col">
+                <video v-show="curMedia && !mediaIssue" ref="videoEl" controls controlslist="nodownload" preload="auto" @timeupdate="onTimeUpdate" @play="onPlayStart" @pause="flushMedia" @ended="onEnded" @error="onVideoError"></video>
+                <!-- 播不了时如实说清原因（真实容器 / 编码），按钮行仍在，可直接转外部播放器 -->
+                <div v-if="mediaIssue" class="media-issue">
+                  <b>⚠️ 这个文件浏览器播不了</b>
+                  <span>{{ mediaIssue }}</span>
+                  <span class="muted">下面是外部播放器按钮，PotPlayer / VLC 能原样打开服务器上的这个文件。</span>
+                </div>
+                <!-- 外部播放器调起（v1.8.7）：浏览器 <video> 解不动 HEVC 10bit/4K，交给本地播放器硬解 -->
+                <div v-if="curMedia" class="ext-row">
+                  <button class="small" @click="openExternal('potplayer')">▶ PotPlayer 播放</button>
+                  <button class="small" @click="openExternal('vlc')">▶ VLC 播放</button>
+                  <button class="small" @click="copyMediaUrl">🔗 复制直链</button>
+                  <span class="muted ext-tip">HEVC / 10bit / 4K 请用外部播放器（浏览器解不动）；首次使用先<a href="#" @click.prevent="dlExtSetup">⬇ 安装联动脚本</a>（自动识别已装的播放器，免管理员）</span>
+                </div>
+                <div v-if="!curMedia" class="ph">🎞 视频播放区（mp4 · flv · mkv）／ 🎵 音频（mp3）<br><span style="font-size:12px">在左侧目录点击媒体文件开始播放（按文件真实容器选播放方式，扩展名写错也能播）</span></div>
+              </div>
+
+              <!-- 学习监控状态（v1.13.8）：视频一开播就打开本机摄像头（320×240），定时截图存服务器 -->
+              <div class="monitor">
+                <div class="mon-title">📹 学习监控状态</div>
+                <div class="cam-box">
+                  <video ref="camEl" class="cam" :class="{ hide: camState !== 'on' }" autoplay muted playsinline></video>
+                  <div v-if="camState !== 'on'" class="cam-cover">
+                    <div class="cam-ph">{{ camState === 'starting' ? '摄像头启动中…' : '摄像头未开启' }}</div>
+                    <div v-if="camMsg" class="cam-msg">{{ camMsg }}</div>
+                  </div>
+                </div>
+                <div class="cam-hint">
+                  <template v-if="!checkEnabled">「视频学习检查」已关闭：不弹注意力检测，也不开摄像头、不截图（可在 设置 → 常规设置 → 视频学习检查 打开）。</template>
+                  <template v-else-if="camState === 'on'">本机摄像头已开启（320×240，仅本地预览）。视频播放中每 <b>{{ camIntervalMin }}</b> 分钟自动截一张图存到服务器（暂停时不截），文件名 = 日期时间 + 播放的视频名称。</template>
+                  <template v-else>点左侧媒体文件播放时，会自动打开本机摄像头并按每 {{ camIntervalMin }} 分钟截一张图（需在浏览器弹窗里允许使用摄像头）。</template>
+                </div>
+              </div>
             </div>
-            <!-- 外部播放器调起（v1.8.7）：浏览器 <video> 解不动 HEVC 10bit/4K，交给本地播放器硬解 -->
-            <div v-if="curMedia" class="ext-row">
-              <button class="small" @click="openExternal('potplayer')">▶ PotPlayer 播放</button>
-              <button class="small" @click="openExternal('vlc')">▶ VLC 播放</button>
-              <button class="small" @click="copyMediaUrl">🔗 复制直链</button>
-              <span class="muted ext-tip">HEVC / 10bit / 4K 请用外部播放器（浏览器解不动）；首次使用先<a href="#" @click.prevent="dlExtSetup">⬇ 安装联动脚本</a>（自动识别已装的播放器，免管理员）</span>
+
+            <!-- 截图流水（v1.13.8）：历史截图路径，默认每页 10 行，管理员可多选删除 -->
+            <div class="shots">
+              <div class="shots-head">
+                <b>截图流水</b>
+                <select v-if="isAdmin" v-model="shotUid" class="mini" @change="loadShots(1)">
+                  <option value="all">全部用户</option>
+                  <option value="me">仅我自己</option>
+                  <option v-for="u in shots.users" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+                </select>
+                <span class="grow"></span>
+                <button v-if="isAdmin" class="small del" :disabled="!shotSel.length" @click="delShots()">🗑 删除选中（{{ shotSel.length }}）</button>
+                <span class="muted">每页</span>
+                <select v-model.number="shotSize" class="mini" @change="loadShots(1)">
+                  <option v-for="n in SHOT_SIZES" :key="n" :value="n">{{ n }}</option>
+                </select>
+                <span class="muted">行</span>
+              </div>
+              <div class="shots-wrap">
+                <table class="shot-tbl">
+                  <thead>
+                    <tr>
+                      <th v-if="isAdmin" class="ck"><input type="checkbox" :checked="allSel" @change="toggleAll($event)" /></th>
+                      <th>截图时间</th>
+                      <th v-if="isAdmin">用户</th>
+                      <th>播放的视频</th>
+                      <th>保存路径</th>
+                      <th class="op">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="r in shots.rows" :key="r.id">
+                      <td v-if="isAdmin" class="ck"><input v-model="shotSel" type="checkbox" :value="r.id" /></td>
+                      <td>{{ r.created_at }}</td>
+                      <td v-if="isAdmin">{{ r.user_name }}</td>
+                      <td class="el" :title="r.video">{{ r.video }}</td>
+                      <td class="el" :title="r.path">{{ r.path }}</td>
+                      <td class="op"><a href="#" @click.prevent="viewShot(r)">查看</a></td>
+                    </tr>
+                    <tr v-if="!shots.rows.length">
+                      <td :colspan="isAdmin ? 6 : 4" class="none">{{ shotsLoading ? '加载中…' : '暂无截图——视频播放中每 ' + camIntervalMin + ' 分钟会自动截一张' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="shots-foot">
+                <span class="muted">共 {{ shots.total }} 条 · 第 {{ shots.page }} / {{ shotPages }} 页</span>
+                <button class="small" :disabled="shots.page <= 1" @click="loadShots(shots.page - 1)">← 上一页</button>
+                <button class="small" :disabled="shots.page >= shotPages" @click="loadShots(shots.page + 1)">下一页 →</button>
+              </div>
             </div>
-            <div v-if="!curMedia" class="ph">🎞 视频播放区（mp4 · flv · mkv）／ 🎵 音频（mp3）<br><span style="font-size:12px">在左侧目录点击媒体文件开始播放（按文件真实容器选播放方式，扩展名写错也能播）</span></div>
           </div>
 
           <!-- 右下：文档预览 -->
@@ -155,12 +227,14 @@
 // 视频教学主面板：开始学习 → 大按钮选学年/学科 → 左目录树 + 右上媒体播放 + 右下文档预览。
 // 进度口径：position=历史最大播放位置（算完成%）；watched=实际观看增量（算学时），15 秒一批上报。
 // 学习会话：每打开一个文件 = 一次会话（/vstudy/session/*），开始页下方「历史学习列表」按会话展示明细。
-import { nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
-import { api } from '../api';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { api, rawUrl } from '../api';
 import { localState, probeLocalBase, sameOriginBase } from '../utils/localBase';
 import VsTreeNode from './VsTreeNode.vue';
 
 const getToken = () => localStorage.getItem('wb_token') || '';
+// 管理员（截图流水里才有「多选删除」与「全部用户」切换）——与 VideoCenterPanel 同一判据
+const isAdmin = (() => { try { return (JSON.parse(localStorage.getItem('wb_user') || '{}') || {}).role === 'admin'; } catch { return false; } })();
 const stage = ref('idle');            // idle → year → subject → browse
 const cfg = ref({ root: '', root_ok: false, years: [], subjects: [] });
 const year = ref('');
@@ -195,6 +269,10 @@ let docSessionId = 0;                // 当前文档的学习会话 id
 
 const IMG_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp'];
 const isImage = (e) => IMG_EXTS.includes(e);
+
+// 视频学习检查开关 / 摄像头截图频率（来自 /vstudy/config）——检查关掉时摄像头也不开、不截图
+const checkEnabled = computed(() => cfg.value.check_enabled !== false);
+const camIntervalMin = computed(() => Math.max(1, Number(cfg.value.cam_interval_min) || 3));
 
 // ---------- 本地直连（大文件走局域网） ----------
 // 探测逻辑收拢到 utils/localBase.js：App 启动时已后台测过一遍（无论域名/IP 登录），
@@ -295,6 +373,7 @@ function startBrowse() {
   if (flushTimer) clearInterval(flushTimer);
   flushTimer = setInterval(() => { flushMedia(); flushDoc(); }, 15000);
   if (!rootOpen.value) toggleRoot();
+  loadShots(1);   // 进浏览页即拉一次截图流水（管理员默认「全部用户」）
 }
 
 // ---------- 媒体播放（按**真实容器**选播放器，v1.13.7） ----------
@@ -391,6 +470,7 @@ function closeMedia() {
   closeSession(mediaSessionId); // 会话盖章关闭时间
   mediaSessionId = 0;
   destroyFlv();
+  stopCam();                    // 关闭视频 = 监控结束，摄像头一并关掉（v1.13.8）
   // videoEl 只在「浏览」分支渲染（v-else），从没进过浏览页就被卸载时它是 null：
   // 无条件解引用会抛 TypeError: Cannot read properties of null (reading 'removeAttribute')
   // （2026-10-02 生产 #/learning 切 tab 报错，栈顶 pn=closeMedia ← stopAll ← onBeforeUnmount）
@@ -428,6 +508,7 @@ function onTimeUpdate() {
   track.last = t;
   track.maxPos = Math.max(track.maxPos, t);
   if (v.duration && isFinite(v.duration)) track.dur = v.duration;
+  if (!v.paused && camState.value === 'off') startCam(); // 已在播但摄像头还没起（如自动播放未触发 play 事件）
   attnMaybeShow(); // 到达阈值（观看 3-5 分钟）弹出注意力检测
 }
 
@@ -448,6 +529,7 @@ function attnSchedule() {
   attnNextAt = (track ? track.watched : 0) + 180 + Math.random() * 120;
 }
 function onPlayStart() {
+  startCam();            // 视频一开始播，本机摄像头同步开启（学习监控状态，v1.13.8）
   if (attnArmed || !track) return;
   attnArmed = true;      // 视频点击播放开始就弹出第一个提示
   attnMissStreak = 0;
@@ -554,12 +636,121 @@ async function flushDoc() {
   try { await api.post('/vstudy/progress', body); } catch { /* 失败丢本批 */ }
 }
 
+// ---------- 学习监控状态（v1.13.8） ----------
+// 用户需求（2026-10-11）：视频播放画面右侧开一个小窗，视频一开播本机摄像头同步开启（320 分辨率、约主画面 1/4）；
+// 窗下是「截图流水」表：每 N 分钟（设置页可改，默认 3）截一张本机画面存到服务器，显示历史截图路径；
+// 管理员可多选删除；流水表默认 10 行/页（可选 5/10/15/30/50/100）带前后翻页。
+const camEl = ref(null);
+const camState = ref('off');        // off | starting | on | denied | error
+const camMsg = ref('');
+let camStream = null;
+let camTimer = null;                // 下一次截图（setTimeout 链，每次按最新频率重排）
+
+const SHOT_SIZES = [5, 10, 15, 30, 50, 100];
+const shotSize = ref(10);
+const shotUid = ref(isAdmin ? 'all' : 'me');   // 管理员默认看全部用户（家长看孩子的学习监控）
+const shotSel = ref([]);
+const shots = ref({ page: 1, pageSize: 10, total: 0, rows: [], users: [], scope: isAdmin ? 'all' : 'me' });
+const shotsLoading = ref(false);
+const shotPages = computed(() => Math.max(1, Math.ceil((shots.value.total || 0) / (shots.value.pageSize || 10))));
+const allSel = computed(() => shots.value.rows.length > 0 && shotSel.value.length === shots.value.rows.length);
+
+// 截图周期：默认按设置里的分钟数；`?cam_sec=N` 可临时改成 N 秒（自动化验证「截图→落盘→流水表」整条链路用）
+function camPeriodMs() {
+  const s = Number(new URLSearchParams(location.search).get('cam_sec'));
+  if (Number.isFinite(s) && s > 0) return s * 1000;
+  return camIntervalMin.value * 60000;
+}
+async function startCam() {
+  if (camState.value === 'on' || camState.value === 'starting') return;
+  if (!checkEnabled.value) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    camState.value = 'error';
+    camMsg.value = '当前浏览器不支持摄像头（需 Chrome/Edge 等现代浏览器，且页面必须是 https 或 localhost）。';
+    return;
+  }
+  camState.value = 'starting'; camMsg.value = '';
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 320 }, height: { ideal: 240 } }, audio: false });
+    if (camEl.value) { camEl.value.srcObject = camStream; camEl.value.play().catch(() => {}); }
+    camState.value = 'on';
+    scheduleShot();
+  } catch (e) {
+    const n = (e && e.name) || '';
+    camState.value = n === 'NotAllowedError' || n === 'SecurityError' ? 'denied' : 'error';
+    camMsg.value = camState.value === 'denied'
+      ? '浏览器未授权使用摄像头：点地址栏的摄像头图标允许访问，再点一次播放即可开启。'
+      : `摄像头开启失败（${n || (e && e.message) || '未知原因'}）：可能被其它程序占用或本机没有摄像头。`;
+  }
+}
+function stopCam() {
+  if (camTimer) { clearTimeout(camTimer); camTimer = null; }
+  if (camStream) { try { camStream.getTracks().forEach((t) => t.stop()); } catch { /* 尽力 */ } camStream = null; }
+  if (camEl.value) { try { camEl.value.srcObject = null; } catch { /* 尽力 */ } }
+  camState.value = 'off';
+}
+function scheduleShot() {
+  if (camTimer) clearTimeout(camTimer);
+  camTimer = setTimeout(camTick, camPeriodMs());
+}
+async function camTick() {
+  camTimer = null;
+  try { await shotOnce(); } catch { /* 单次截图失败不打断播放，下一周期再试 */ }
+  if (camState.value === 'on') scheduleShot();
+}
+// 抓一帧本机摄像头画面 → JPEG → POST 给服务端落盘（文件名由服务端按「日期时间_视频名」生成）
+async function shotOnce() {
+  const v = videoEl.value, c = camEl.value;
+  if (!checkEnabled.value || !curMedia.value || !c || !c.videoWidth) return;
+  if (!v || v.paused) return;      // 视频没在播就不截（暂停期间不产生无效画面）
+  const cv = document.createElement('canvas');
+  cv.width = 320; cv.height = 240;   // 分辨率只要 320
+  cv.getContext('2d').drawImage(c, 0, 0, 320, 240);
+  const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.72));
+  if (!blob) return;
+  // 走 rawUrl：自动补 fnOS 网关前缀 + ?token=（这条通道不发 Authorization 头，与其它二进制上传一致）
+  const res = await fetch(rawUrl(`/api/vstudy/cam?video=${encodeURIComponent(curMedia.value.name)}`), {
+    method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
+  });
+  if (!res.ok) throw new Error('截图上传失败：HTTP ' + res.status);
+  loadShots(1);                    // 新截图立刻出现在流水表最上面
+}
+function camUrl(file) {
+  return `${sameOriginBase()}/api/vstudy/cam/file/${encodeURIComponent(file)}?token=${encodeURIComponent(getToken())}`;
+}
+function viewShot(row) { window.open(camUrl(row.file), '_blank'); }
+function toggleAll(e) { shotSel.value = e.target.checked ? shots.value.rows.map((r) => r.id) : []; }
+async function loadShots(page = shots.value.page) {
+  shotsLoading.value = true;
+  try {
+    const uid = isAdmin ? shotUid.value : 'me';
+    const d = await api.get(`/vstudy/cam/list?page=${page}&pageSize=${shotSize.value}&uid=${encodeURIComponent(uid)}`);
+    shots.value = { ...shots.value, ...d };
+    shotSel.value = [];
+  } catch {
+    shots.value = { ...shots.value, page, total: 0, rows: [] };  // 读不到就清空，别留旧数据误导
+    shotSel.value = [];
+  }
+  shotsLoading.value = false;
+}
+async function delShots() {
+  const ids = [...shotSel.value];
+  if (!ids.length) return;
+  if (!window.confirm(`确定删除选中的 ${ids.length} 张监控截图吗？服务器上的图片文件会一并删除，且不可恢复。`)) return;
+  try {
+    const r = await api.post('/vstudy/cam/delete', { ids });
+    loadShots(shots.value.total - ids.length <= (shots.value.page - 1) * shotSize.value ? Math.max(1, shots.value.page - 1) : shots.value.page);
+    return r;
+  } catch (e) { alert('删除失败：' + e.message); }
+}
+
 // ---------- 收尾 ----------
 function stopAll() {
   flushMedia(); flushDoc();
   closeMedia();
   closeDoc(false);
   attnCancel();
+  stopCam();
   if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
 }
 onMounted(() => {
@@ -633,7 +824,39 @@ onBeforeUnmount(() => {
 .zone { display: flex; flex-direction: column; }
 .zone-head { display: flex; align-items: center; gap: 10px; font-size: 13.5px; margin-bottom: 8px; }
 .zone-head .grow { flex: 1; }
-.player-zone video { width: 100%; max-height: 46vh; background: #000; border-radius: 8px; }
+.zone-body { display: flex; gap: 12px; align-items: flex-start; }
+.player-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.player-col video { width: 100%; max-height: 46vh; background: #000; border-radius: 8px; }
+/* 学习监控状态（v1.13.8）：播放画面右侧的小窗，宽度固定 320（= 截图分辨率，约主画面 1/4） */
+.monitor { flex: 0 0 320px; width: 320px; display: flex; flex-direction: column; gap: 8px; }
+.mon-title { font-size: 13.5px; font-weight: 600; }
+.cam-box { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #111; border-radius: 8px; overflow: hidden; }
+.cam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); } /* 镜像：像照镜子，符合直觉 */
+.cam.hide { visibility: hidden; }
+.cam-cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px; text-align: center; background: var(--bg3); }
+.cam-ph { font-size: 13px; color: var(--text3); }
+.cam-msg { font-size: 11.5px; color: var(--red); line-height: 1.6; }
+.cam-hint { font-size: 11.5px; color: var(--text3); line-height: 1.7; }
+.cam-hint b { color: var(--text2); }
+/* 截图流水：全宽表格（在播放区下方，管理员多选删除 + 前后翻页） */
+.shots { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.shots-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.shots-head .grow { flex: 1; }
+.mini { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12.5px; }
+.small.del { color: var(--red); border-color: var(--red); }
+.small.del:disabled { color: var(--text3); border-color: var(--border); cursor: default; }
+.shots-wrap { overflow-x: auto; }
+.shot-tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.shot-tbl th { text-align: left; font-weight: 500; color: var(--text3); padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.shot-tbl td { padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.shot-tbl th.ck, .shot-tbl td.ck { width: 28px; }
+.shot-tbl td.el { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.shot-tbl td.none { color: var(--text3); text-align: center; padding: 16px; white-space: normal; }
+.shot-tbl th.op, .shot-tbl td.op { width: 48px; }
+.shot-tbl td.op a { color: var(--accent); }
+.shots-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.shots-foot button:disabled { opacity: .45; cursor: default; }
+@media (max-width: 1100px) { .zone-body { flex-wrap: wrap; } .monitor { flex: 1 1 100%; width: 100%; max-width: 420px; } }
 /* 外部播放器按钮行（v1.8.7）：HEVC 10bit/4K 交给本地播放器 */
 .ext-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0 2px; }
 .ext-row .ext-tip { font-size: 12px; }

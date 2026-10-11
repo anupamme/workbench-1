@@ -1569,6 +1569,23 @@ CREATE TABLE IF NOT EXISTS vc_records (
 -- 播放历史按「最近打开/观看」倒序翻页（vc_records 一表两用：算进度 + 当播放历史）
 CREATE INDEX IF NOT EXISTS idx_vc_records_recent ON vc_records(user_id, updated_at DESC);
 
+-- ---------- 学习监控状态（v1.13.8）：视频教学播放时本机摄像头定时截图 ----------
+-- 一张截图 = 一行流水。文件落盘 data/vstudy-cam/<日期时间>_<视频名>.jpg（用户指定的命名规则），
+-- path 存服务器上的完整落盘路径，就是「学习监控状态 → 截图流水」表里显示的那一列。
+-- 主库表（与 vstudy_sessions/vc_records 同址），按 user_id 隔离：本人只看自己，
+-- 管理员可切「全部用户」查看并多选删除（DELETE 端点内再限管理员）。
+CREATE TABLE IF NOT EXISTS vstudy_cam_shots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  user_name TEXT NOT NULL DEFAULT '',
+  video TEXT NOT NULL DEFAULT '',    -- 截这张图时正在播放的视频名（含扩展名）
+  file TEXT NOT NULL DEFAULT '',     -- 文件名（白名单校验 + 取文件用）
+  path TEXT NOT NULL DEFAULT '',     -- 服务器上的完整路径（流水表「路径」列）
+  size INTEGER DEFAULT 0,            -- 图片字节数
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_vstudy_cam_shots ON vstudy_cam_shots(user_id, id DESC);
+
 -- ---------- 练琴录音（录音文件落全局上传路径，有效时长由有权限成员确认） ----------
 CREATE TABLE IF NOT EXISTS piano_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

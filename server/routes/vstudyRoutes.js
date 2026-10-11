@@ -7,7 +7,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { db, getSetting, setSetting } = require('../db');
+const { db, getSetting, setSetting, dataDir } = require('../db');
 const router = express.Router();
 
 // ---------- 扩展名分类（前端面板同名常量保持一致） ----------
@@ -46,7 +46,13 @@ function sniffBox(abs) {
       const s4 = b.toString('latin1', 0, 4);
       if (s4.startsWith('FLV')) return 'flv';
       if (b.toString('latin1', 4, 8) === 'ftyp') return 'mp4';   // ISO BMFF：mp4/m4v/mov 同族
-      if (s4 === 'RIFF') return 'avi';
+      if (s4 === 'RIFF') {
+        // RIFF 是容器家族：真正身份看偏移 8 的 form type。WAV 也被 RIFF 包着，
+        // 一律当 avi 会把 .wav 判成「浏览器不能播的 AVI」——学习目录里的音频就这么被误拦（v1.13.8 修）
+        const form = b.toString('latin1', 8, 12);
+        if (form === 'WAVE') return 'wav';
+        return 'avi';
+      }
       if (s4 === 'OggS') return 'ogg';
       if (s4 === 'fLaC') return 'flac';
       if ((b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) === 0x1a45dfa3) {
@@ -136,6 +142,8 @@ router.get(['/vstudy/config', '/vc/config'], (req, res) => {
   const j = { root: r, root_ok: !!r && fs.existsSync(r) };
   // 视频学习检查开关（设置页全局项，仅管理员可改）：关闭时前端不弹注意力检测
   j.check_enabled = getSetting(db, 'vstudy_check_enabled', '1') !== '0';
+  // 摄像头截图保存频率（分钟，默认 3）：前端「学习监控状态」按它定时截图；关掉视频学习检查时也一并停用
+  j.cam_interval_min = camIntervalMin();
   if (scope === 'vstudy') {
     j.years = getSetting(db, 'vstudy_years', null) || DEFAULT_YEARS;
     j.subjects = getSetting(db, 'vstudy_subjects', null) || DEFAULT_SUBJECTS;
@@ -546,6 +554,139 @@ router.get('/vstudy/stats', (req, res) => {
   }
   const fmt = (m) => [...m.entries()].map(([name, hours]) => ({ name, hours })).sort((a, b) => b.hours - a.hours);
   res.json({ by_year: fmt(byYear), by_subject: fmt(bySubject), total_hours: rows.reduce((s, r) => s + (r.watched_sec || 0), 0) / 3600 });
+});
+
+// ---------- 学习监控状态（v1.13.8）：视频教学播放期间，本机摄像头定时截图存服务器 ----------
+// 用户需求（2026-10-11）：视频播放画面右侧开一个小窗口，视频一开始播本机摄像头同步开启（320 分辨率即可，
+// 画面约主画面的 1/4）；窗口下方是「截图流水」表，显示每 N 分钟一张的历史截图路径（N 在设置页可改，默认 3）；
+// 文件名 = 日期时间 + 播放的视频名称；管理员可多选删除；流水表默认每页 10 行（可选 5/10/15/30/50/100）带前后翻页。
+// 落盘：data/vstudy-cam/；清单落主库 vstudy_cam_shots（见 db.js）。
+const CAM_DIR = path.join(dataDir, 'vstudy-cam');
+const CAM_INTERVAL_DEFAULT = 3;
+const CAM_KEEP = 2000;               // 兜底上限：超过时自动清最老的（正常情况下由管理员在流水表里删）
+
+// 截图频率（分钟，1~60）：设置页「视频学习检查 → 摄像头截图保存频率分钟数」
+// 越界收敛到边界（0→1、99→60），非数字才回默认 3——与 misc.js 的 camMinValid 同一口径
+function camIntervalMin() {
+  const n = parseInt(getSetting(db, 'vstudy_cam_interval_min', String(CAM_INTERVAL_DEFAULT)), 10);
+  if (!Number.isFinite(n)) return CAM_INTERVAL_DEFAULT;
+  return Math.min(60, Math.max(1, n));
+}
+// 文件名安全化：视频名里的路径分隔符/控制字符一律换成 _（含 '/' 会造出子目录 = 目录穿越面）
+function safeName(s, max = 60) {
+  return String(s || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+function stampName(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+// 「日期时间 + 播放的视频名称.jpg」——视频名先去掉扩展名，避免出现「xxx.mp4.jpg」这种尾巴
+const VIDEO_EXT_RE = /\.(mp4|m4v|mov|flv|mkv|avi|wmv|ts|mpg|mpeg|webm|mp3|m4a|wav|aac|ogg|flac)$/i;
+function camFileName(video) {
+  const base = safeName(String(video || '').replace(VIDEO_EXT_RE, ''), 40) || '未命名';
+  return `${stampName()}_${base}.jpg`;
+}
+// 白名单：只认 <日期时间>_<视频名>.jpg 这形态，防目录穿越。
+// path.basename 先剥掉一切分隔符（'../../win.ini' → 'win.ini'，扩展名不对即被拒），
+// 首字符必须非 '.' 才能挡住 '..' 本身与隐藏名——**别再加 `includes('..')`**：
+// 视频名里出现点号是常事（如 `逃逸尝试..1` 安全化后是 `.._逃逸尝试..1.jpg`），
+// 那样会让「按流水表删除」删不掉服务器上的真实文件（v1.13.8 e2e 抓到的漏删）。
+function camFilePath(file) {
+  const f = path.basename(String(file || ''));
+  if (!/^[\w一-龥][^\\/]*\.jpg$/i.test(f) || f.length > 160) return null;
+  return path.join(CAM_DIR, f);
+}
+function camRows(where, bind, pageSize, page) {
+  return db.prepare(`SELECT id, user_id, user_name, video, file, path, size, created_at FROM vstudy_cam_shots ${where}
+    ORDER BY id DESC LIMIT ? OFFSET ?`).all(...bind, pageSize, (page - 1) * pageSize);
+}
+function pruneCamShots() {
+  const c = db.prepare('SELECT COUNT(*) c FROM vstudy_cam_shots').get().c;
+  if (c <= CAM_KEEP) return 0;
+  const olds = db.prepare('SELECT id, file FROM vstudy_cam_shots ORDER BY id ASC LIMIT ?').all(c - CAM_KEEP);
+  for (const r of olds) {
+    const p = camFilePath(r.file);
+    if (p) { try { fs.unlinkSync(p); } catch { /* 文件可能已被手动删 */ } }
+    db.prepare('DELETE FROM vstudy_cam_shots WHERE id=?').run(r.id);
+  }
+  return olds.length;
+}
+
+// 上传一张截图（前端 canvas 抓本机摄像头画面 → JPEG 二进制 body）。
+// 全局 express.json 不解析 image/jpeg，所以这里单独挂 express.raw（与智能板拍照同一套路）。
+// 鉴权走常规登录态（Authorization 头或 ?token=），不是免登通道。
+router.post('/vstudy/cam', express.raw({ type: ['image/jpeg', 'image/png'], limit: '2mb' }), (req, res) => {
+  // 设置页关掉「视频学习检查」= 整套学习监督停用（注意力检测与摄像头截图一起停），这里兜底拦下
+  if (getSetting(db, 'vstudy_check_enabled', '1') === '0') {
+    return res.status(400).json({ error: '视频学习检查已关闭，不再保存学习监控截图' });
+  }
+  const buf = req.body;
+  if (!Buffer.isBuffer(buf) || buf.length < 100) return res.status(400).json({ error: '截图数据为空' });
+  if (buf[0] !== 0xff || buf[1] !== 0xd8) return res.status(400).json({ error: '不是 JPEG 图片数据' });
+  const video = safeName(req.query.video, 80) || '未命名';
+  fs.mkdirSync(CAM_DIR, { recursive: true });
+  let file = camFileName(video);
+  for (let n = 2; fs.existsSync(path.join(CAM_DIR, file)); n++) file = camFileName(video).replace(/\.jpg$/i, `_${n}.jpg`); // 同秒撞名加序号
+  const full = path.join(CAM_DIR, file);
+  try { fs.writeFileSync(full, buf); } catch (e) { return res.status(500).json({ error: '截图保存失败：' + e.message }); }
+  const u = db.prepare('SELECT display_name, username FROM users WHERE id=?').get(req.user.id);
+  const r = db.prepare(`INSERT INTO vstudy_cam_shots(user_id, user_name, video, file, path, size) VALUES(?,?,?,?,?,?)`)
+    .run(req.user.id, (u && (u.display_name || u.username)) || '', video, file, full, buf.length);
+  pruneCamShots();
+  res.json({ ok: true, id: Number(r.lastInsertRowid), file, path: full, interval_min: camIntervalMin() });
+});
+
+// 截图流水（分页）。uid：缺省/'me' = 本人；'all' = 全部用户（仅管理员）；数字 = 指定用户（管理员或本人）。
+// 返回 users 供管理员在下拉里切人（本人看不到别人的截图，连带人名单也不下发）。
+router.get('/vstudy/cam/list', (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = [5, 10, 15, 30, 50, 100].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 10;
+  const isAdmin = !!(req.user && req.user.role === 'admin');
+  const uidQ = String(req.query.uid || '').trim();
+  let where = 'WHERE user_id = ?', bind = [req.user.id], scope = 'me';
+  if (uidQ === 'all') {
+    if (!isAdmin) return res.status(403).json({ error: '仅管理员可查看全部用户的学习监控截图' });
+    where = ''; bind = []; scope = 'all';
+  } else if (uidQ && uidQ !== 'me') {
+    const n = parseInt(uidQ, 10);
+    if (!Number.isFinite(n) || n <= 0) return res.status(400).json({ error: 'uid 不合法' });
+    if (n !== req.user.id && !isAdmin) return res.status(403).json({ error: '仅管理员可查看他人的学习监控截图' });
+    where = 'WHERE user_id = ?'; bind = [n]; scope = String(n);
+  }
+  const total = db.prepare(`SELECT COUNT(*) c FROM vstudy_cam_shots ${where}`).get(...bind).c;
+  const users = isAdmin
+    ? db.prepare('SELECT id, display_name, username FROM users WHERE is_bot=0 ORDER BY id').all()
+      .map((u) => ({ id: u.id, name: u.display_name || u.username }))
+    : [];
+  res.json({ total, page, pageSize, scope, interval_min: camIntervalMin(), check_enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0', rows: camRows(where, bind, pageSize, page), users });
+});
+
+// 看单张截图（流水表「查看」）：只有本人或管理员能看，防拿文件名猜别人的画面
+router.get('/vstudy/cam/file/:file', (req, res) => {
+  const full = camFilePath(req.params.file);
+  if (!full || !fs.existsSync(full)) return res.status(404).json({ error: '截图不存在' });
+  const row = db.prepare('SELECT user_id FROM vstudy_cam_shots WHERE file=?').get(path.basename(full));
+  if (!row) return res.status(404).json({ error: '截图不存在' });
+  if (row.user_id !== req.user.id && !(req.user && req.user.role === 'admin')) return res.status(403).json({ error: '无权查看该截图' });
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.sendFile(full);
+});
+
+// 批量删除（仅管理员）：勾了几张删几张，服务器上的图片文件一并删除
+router.post('/vstudy/cam/delete', (req, res) => {
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可删除学习监控截图' });
+  const ids = (Array.isArray((req.body || {}).ids) ? req.body.ids : []).map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n) && n > 0).slice(0, 500);
+  if (!ids.length) return res.status(400).json({ error: '请选择要删除的截图' });
+  let deleted = 0, missing = 0;
+  for (const id of ids) {
+    const row = db.prepare('SELECT file FROM vstudy_cam_shots WHERE id=?').get(id);
+    if (!row) { missing++; continue; }
+    const p = camFilePath(row.file);
+    if (p) { try { fs.unlinkSync(p); } catch { /* 文件已被手动删：删清单即可 */ } }
+    db.prepare('DELETE FROM vstudy_cam_shots WHERE id=?').run(id);
+    deleted++;
+  }
+  res.json({ ok: true, deleted, missing });
 });
 
 module.exports = router;

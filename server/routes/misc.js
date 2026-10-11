@@ -403,19 +403,38 @@ router.post('/settings/local-base', (req, res) => {
   res.json({ ok: true, base });
 });
 
-// ---------- 视频学习检查（注意力检测，全局，仅管理员可改） ----------
+// ---------- 视频学习检查（注意力检测 + 摄像头截图，全局，仅管理员可改） ----------
 // 开启：学习 →「视频教学」播放中每隔 3~5 分钟在页面随机位置弹出 5 秒倒计时图标，
-//       未点确认按规则扣减学时（首次扣一半、持续未点扣光本会话），扣减明细进「学时记账」。
-// 关闭：不再弹出检测，也不做学时（教学积分）扣减——前端不再弹，服务端 /vstudy/attention 兜底不扣。
+//       未点确认按规则扣减学时（首次扣一半、持续未点扣光本会话），扣减明细进「学时记账」；
+//       同时右侧「学习监控状态」会开本机摄像头，按下面的频率定时截图存服务器（v1.13.8）。
+// 关闭：不再弹出检测，也不做学时（教学积分）扣减，摄像头截图一并停用——
+//       前端不再弹、不再截，服务端 /vstudy/attention 与 POST /vstudy/cam 双双兜底。
+const CAM_MIN_DEFAULT = 3;
+// 合法区间 1~60 分钟：越界收敛到边界（填 0 存 1、填 99 存 60），非数字才回默认 3——
+// 比「越界就悄悄改回默认」友好：用户填 99 时预期是「最大」，不是「重置成 3」
+function camMinValid(v) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n)) return CAM_MIN_DEFAULT;
+  return Math.min(60, Math.max(1, n));
+}
 router.get('/settings/vstudy-check', (req, res) => {
-  res.json({ enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0' });
+  res.json({
+    enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0',
+    cam_interval_min: camMinValid(getSetting(db, 'vstudy_cam_interval_min', CAM_MIN_DEFAULT)),
+  });
 });
 router.post('/settings/vstudy-check', (req, res) => {
   if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可配置视频学习检查' });
-  const v = (req.body || {}).enabled;
+  const b = req.body || {};
+  const v = b.enabled;
   const enabled = !(v === false || v === 0 || v === '0'); // 缺省视为开启
   setSetting(db, 'vstudy_check_enabled', enabled ? '1' : '0');
-  res.json({ ok: true, enabled });
+  let cam = camMinValid(getSetting(db, 'vstudy_cam_interval_min', CAM_MIN_DEFAULT));
+  if (b.cam_interval_min !== undefined) {   // 缺省不动（面板只切开关时不会把频率带回默认值）
+    cam = camMinValid(b.cam_interval_min);
+    setSetting(db, 'vstudy_cam_interval_min', String(cam));
+  }
+  res.json({ ok: true, enabled, cam_interval_min: cam });
 });
 
 // ---------- 多平台访问地址（自 family-learning v3.0 移植；「设置 → 多平台」分享访问用） ----------
