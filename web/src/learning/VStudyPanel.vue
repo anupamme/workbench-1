@@ -398,6 +398,8 @@ function attnMaybeShow() {
   if (track.watched >= attnNextAt) showAttn();
 }
 function showAttn() {
+  // 设置页「视频学习检查」关闭时整个检测停用（不弹、不扣）——服务端 /vstudy/attention 同样兜底
+  if (cfg.value.check_enabled === false) return;
   attnLeft.value = 5;
   // 随机位置：整个页面视口范围内（fixed 定位），避开边缘
   attnX.value = Math.round(12 + Math.random() * Math.max(20, window.innerWidth - 110));

@@ -403,6 +403,21 @@ router.post('/settings/local-base', (req, res) => {
   res.json({ ok: true, base });
 });
 
+// ---------- 视频学习检查（注意力检测，全局，仅管理员可改） ----------
+// 开启：学习 →「视频教学」播放中每隔 3~5 分钟在页面随机位置弹出 5 秒倒计时图标，
+//       未点确认按规则扣减学时（首次扣一半、持续未点扣光本会话），扣减明细进「学时记账」。
+// 关闭：不再弹出检测，也不做学时（教学积分）扣减——前端不再弹，服务端 /vstudy/attention 兜底不扣。
+router.get('/settings/vstudy-check', (req, res) => {
+  res.json({ enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0' });
+});
+router.post('/settings/vstudy-check', (req, res) => {
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可配置视频学习检查' });
+  const v = (req.body || {}).enabled;
+  const enabled = !(v === false || v === 0 || v === '0'); // 缺省视为开启
+  setSetting(db, 'vstudy_check_enabled', enabled ? '1' : '0');
+  res.json({ ok: true, enabled });
+});
+
 // ---------- 多平台访问地址（自 family-learning v3.0 移植；「设置 → 多平台」分享访问用） ----------
 // 外网地址：花生壳/内网穿透等公网入口，登录即可读（分享页要展示），仅管理员可改
 router.get('/settings/external-base', (req, res) => {

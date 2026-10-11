@@ -46,6 +46,8 @@ router.get(['/vstudy/config', '/vc/config'], (req, res) => {
   const scope = scopeOf(req);
   const r = rootDir(scope);
   const j = { root: r, root_ok: !!r && fs.existsSync(r) };
+  // 视频学习检查开关（设置页全局项，仅管理员可改）：关闭时前端不弹注意力检测
+  j.check_enabled = getSetting(db, 'vstudy_check_enabled', '1') !== '0';
   if (scope === 'vstudy') {
     j.years = getSetting(db, 'vstudy_years', null) || DEFAULT_YEARS;
     j.subjects = getSetting(db, 'vstudy_subjects', null) || DEFAULT_SUBJECTS;
@@ -206,7 +208,9 @@ function settleSessionLedger(sid, final = false) {
 }
 
 // 注意力检测扣减：ratio=0.5（弹出 5 秒内未点击，扣已进行学时的一半）/ 1（持续未确认，扣光本会话）
+// 设置页「视频学习检查」关闭时不扣减——前端已不弹，这里兜底防旧页面/直接调用仍扣学时。
 router.post('/vstudy/attention', (req, res) => {
+  if (getSetting(db, 'vstudy_check_enabled', '1') === '0') return res.json({ ok: true, cut_sec: 0, disabled: true });
   const sid = Number((req.body || {}).session_id) || 0;
   const ratio = Number((req.body || {}).ratio) >= 1 ? 1 : 0.5;
   if (sid <= 0) return res.status(400).json({ error: '缺少 session_id' });

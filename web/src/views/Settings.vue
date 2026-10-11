@@ -112,6 +112,20 @@
         <div v-if="vcRoot.ok === false" class="muted" style="font-size:12px; margin-top:8px; color:var(--red)">当前路径在服务器上不可访问，请核对后再保存</div>
       </div>
 
+      <!-- 视频学习检查开关（v1.13.4，仅管理员）：控制「学习 → 视频教学」播放中的注意力检测与学时扣减 -->
+      <div class="card" v-if="isAdmin">
+        <h3>视频学习检查</h3>
+        <div class="muted" style="font-size:12px; margin-bottom:10px">
+          开启时：「学习 → 视频教学」点「开始学习」进入播放后，每隔几分钟会在页面随机位置弹出 5 秒倒计时图标（注意力检测）；
+          未点击则按规则扣减学时（首次扣一半、持续未点扣光本会话），扣减明细进「学时记账」。
+          <b>关闭后：不再弹出检测，也不做教学积分（学时）扣减。</b>
+        </div>
+        <label style="cursor:pointer; display:flex; align-items:center; gap:8px; font-size:13.5px">
+          <input v-model="vstudyCheck.enabled" type="checkbox" style="width:auto" :disabled="savingCheck" @change="saveVstudyCheck" />
+          <b>启用视频学习检查（注意力检测 + 学时扣减）</b>
+        </label>
+      </div>
+
       <div class="card">
         <h3>天气</h3>
         <div class="form-row"><label>城市</label><input v-model="cityInput" placeholder="如：宁波 / 上海" /></div>
@@ -583,6 +597,7 @@ onMounted(async () => {
   try { const ur = await api.get('/settings/upload-root'); uploadRoot.value = { dir: ur.dir || '' }; } catch {}
   try { const lb = await api.get('/settings/local-base'); localBase.value = { base: lb.base || '' }; } catch {}
   try { if (isAdmin.value) { const vc = await api.get('/vc/config'); vcRoot.value = { dir: vc.root || '', ok: !!vc.root_ok }; } } catch {}
+  try { if (isAdmin.value) { const chk = await api.get('/settings/vstudy-check'); vstudyCheck.value = { enabled: !!chk.enabled }; } } catch {}
   try { if (isAdmin.value) { const la = await api.get('/settings/lan-addrs'); lanAddrs.value = la.addrs || []; } } catch {}
   try { if (isAdmin.value) { const dl = await api.get('/dingtalk/login-config'); ddLogin.value = { corp_id: dl.corp_id || '', app_key: dl.app_key || '', app_secret: dl.app_secret || '' }; } } catch {}
   // 免登是否已启用（管理员参数齐=启用），状态行展示用
@@ -760,6 +775,19 @@ async function saveLocalBase() {
     probeLocalBase(true);   // 立即重测新地址：可达则徽标/学习页通道即时切换
     flash(localBase.value.base ? '本地直连已启用：' + localBase.value.base + '（不可达时自动回落公网）' : '已停用本地直连，全部走当前访问地址');
   } catch (e) { flash('保存失败：' + e.message, 'err'); }
+}
+
+// 视频学习检查（v1.13.4，仅管理员）：关闭后「视频教学」播放中不再弹注意力检测、也不扣学时
+const vstudyCheck = ref({ enabled: true });
+const savingCheck = ref(false);
+async function saveVstudyCheck() {
+  savingCheck.value = true;
+  try {
+    const r = await api.post('/settings/vstudy-check', { enabled: vstudyCheck.value.enabled });
+    vstudyCheck.value.enabled = !!r.enabled;
+    flash(r.enabled ? '已开启视频学习检查：播放中会弹出注意力检测' : '已关闭视频学习检查：播放中不再弹出检测，也不扣减学时');
+  } catch (e) { flash('保存失败：' + e.message, 'err'); }
+  savingCheck.value = false;
 }
 
 // 智能家居视频路径（v1.9.26，仅管理员）：智能家居页「视频中心」tab 的根目录，与视频教学目录独立
