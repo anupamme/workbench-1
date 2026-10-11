@@ -140,9 +140,10 @@ router.get(['/vstudy/config', '/vc/config'], (req, res) => {
   const scope = scopeOf(req);
   const r = rootDir(scope);
   const j = { root: r, root_ok: !!r && fs.existsSync(r) };
-  // 视频学习检查开关（设置页全局项，仅管理员可改）：关闭时前端不弹注意力检测
+  // 注意力检测开关（设置页全局项，仅管理员可改）：关闭时前端不弹检测、不扣学时
   j.check_enabled = getSetting(db, 'vstudy_check_enabled', '1') !== '0';
-  // 摄像头截图保存频率（分钟，默认 3）：前端「学习监控状态」按它定时截图；关掉视频学习检查时也一并停用
+  // 摄像头监控开关 + 截图保存频率（分钟，默认 3）：前端「学习监控状态」按它开摄像头/定时截图
+  j.cam_enabled = camEnabled();
   j.cam_interval_min = camIntervalMin();
   if (scope === 'vstudy') {
     j.years = getSetting(db, 'vstudy_years', null) || DEFAULT_YEARS;
@@ -335,7 +336,8 @@ function settleSessionLedger(sid, final = false) {
 }
 
 // 注意力检测扣减：ratio=0.5（弹出 5 秒内未点击，扣已进行学时的一半）/ 1（持续未确认，扣光本会话）
-// 设置页「视频学习检查」关闭时不扣减——前端已不弹，这里兜底防旧页面/直接调用仍扣学时。
+// 只有「注意力检测」开关（vstudy_check_enabled）能停它——摄像头开关与扣学时无关（v1.13.9 拆开）。
+// 关闭时不扣减：前端已不弹，这里兜底防旧页面/直接调用仍扣学时。
 router.post('/vstudy/attention', (req, res) => {
   if (getSetting(db, 'vstudy_check_enabled', '1') === '0') return res.json({ ok: true, cut_sec: 0, disabled: true });
   const sid = Number((req.body || {}).session_id) || 0;
@@ -572,6 +574,8 @@ function camIntervalMin() {
   if (!Number.isFinite(n)) return CAM_INTERVAL_DEFAULT;
   return Math.min(60, Math.max(1, n));
 }
+// 摄像头监控开关（v1.13.9 起与「注意力检测」分开）：关闭 = 不开摄像头、不截图，但注意力检测照常
+function camEnabled() { return getSetting(db, 'vstudy_cam_enabled', '1') !== '0'; }
 // 文件名安全化：视频名里的路径分隔符/控制字符一律换成 _（含 '/' 会造出子目录 = 目录穿越面）
 function safeName(s, max = 60) {
   return String(s || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -616,9 +620,9 @@ function pruneCamShots() {
 // 全局 express.json 不解析 image/jpeg，所以这里单独挂 express.raw（与智能板拍照同一套路）。
 // 鉴权走常规登录态（Authorization 头或 ?token=），不是免登通道。
 router.post('/vstudy/cam', express.raw({ type: ['image/jpeg', 'image/png'], limit: '2mb' }), (req, res) => {
-  // 设置页关掉「视频学习检查」= 整套学习监督停用（注意力检测与摄像头截图一起停），这里兜底拦下
-  if (getSetting(db, 'vstudy_check_enabled', '1') === '0') {
-    return res.status(400).json({ error: '视频学习检查已关闭，不再保存学习监控截图' });
+  // 设置页关掉「摄像头监控」= 不再保存截图（v1.13.9 起它与注意力检测分开），这里兜底拦下
+  if (!camEnabled()) {
+    return res.status(400).json({ error: '摄像头监控已关闭，不再保存学习监控截图' });
   }
   const buf = req.body;
   if (!Buffer.isBuffer(buf) || buf.length < 100) return res.status(400).json({ error: '截图数据为空' });
@@ -658,7 +662,7 @@ router.get('/vstudy/cam/list', (req, res) => {
     ? db.prepare('SELECT id, display_name, username FROM users WHERE is_bot=0 ORDER BY id').all()
       .map((u) => ({ id: u.id, name: u.display_name || u.username }))
     : [];
-  res.json({ total, page, pageSize, scope, interval_min: camIntervalMin(), check_enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0', rows: camRows(where, bind, pageSize, page), users });
+  res.json({ total, page, pageSize, scope, interval_min: camIntervalMin(), cam_enabled: camEnabled(), check_enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0', rows: camRows(where, bind, pageSize, page), users });
 });
 
 // 看单张截图（流水表「查看」）：只有本人或管理员能看，防拿文件名猜别人的画面

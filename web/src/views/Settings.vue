@@ -112,24 +112,28 @@
         <div v-if="vcRoot.ok === false" class="muted" style="font-size:12px; margin-top:8px; color:var(--red)">当前路径在服务器上不可访问，请核对后再保存</div>
       </div>
 
-      <!-- 视频学习检查开关（v1.13.4，仅管理员）：控制「学习 → 视频教学」播放中的注意力检测与学时扣减 -->
+      <!-- 视频学习检查（v1.13.4，仅管理员）：两个开关各自独立、互不联动（v1.13.9 起拆开） -->
       <div class="card" v-if="isAdmin">
         <h3>视频学习检查</h3>
         <div class="muted" style="font-size:12px; margin-bottom:10px">
-          开启时：「学习 → 视频教学」点「开始学习」进入播放后，每隔几分钟会在页面随机位置弹出 5 秒倒计时图标（注意力检测）；
-          未点击则按规则扣减学时（首次扣一半、持续未点扣光本会话），扣减明细进「学时记账」。
-          同时播放画面右侧会出现「学习监控状态」小窗：视频一开始播就打开本机摄像头（320 分辨率），
-          按下面设定的频率自动截图存到服务器，历史截图在流水表里可见（管理员可多选删除）。
-          <b>关闭后：不再弹出检测、不做教学积分（学时）扣减，也不再开摄像头、不再截图。</b>
+          「学习 → 视频教学」点「开始学习」进入播放后，下面两个开关<b>各自独立生效</b>，可以只开其中一个：
         </div>
-        <label style="cursor:pointer; display:flex; align-items:center; gap:8px; font-size:13.5px">
-          <input v-model="vstudyCheck.enabled" type="checkbox" style="width:auto" :disabled="savingCheck" @change="saveVstudyCheck" />
-          <b>启用视频学习检查（注意力检测 + 学时扣减 + 摄像头截图）</b>
+        <label style="cursor:pointer; display:flex; align-items:flex-start; gap:8px; font-size:13.5px">
+          <input v-model="vstudyCheck.enabled" type="checkbox" style="width:auto; margin-top:3px" :disabled="savingCheck" @change="saveVstudyCheck" />
+          <span><b>注意力检测（弹窗 + 学时扣减）</b><br />
+            <span class="muted" style="font-size:12px">每隔几分钟在页面随机位置弹出 5 秒倒计时图标，未点击则按规则扣减学时（首次扣一半、持续未点扣光本会话），扣减明细进「学时记账」。关闭后不弹、不扣。</span>
+          </span>
+        </label>
+        <label style="cursor:pointer; display:flex; align-items:flex-start; gap:8px; font-size:13.5px; margin-top:12px">
+          <input v-model="vstudyCheck.camEnabled" type="checkbox" style="width:auto; margin-top:3px" :disabled="savingCheck" @change="saveVstudyCheck" />
+          <span><b>摄像头监控（学习监控状态小窗 + 定时截图）</b><br />
+            <span class="muted" style="font-size:12px">播放画面右侧出现「学习监控状态」小窗：视频一开始播就打开本机摄像头（320 分辨率），按下面的频率自动截图存到服务器，历史截图在流水表里可见（管理员可多选删除）。关闭后不开摄像头、不截图。</span>
+          </span>
         </label>
         <div class="row" style="margin-top:12px; align-items:center; gap:8px">
           <label style="font-size:13.5px">摄像头截图保存频率</label>
           <input v-model.number="vstudyCheck.camInterval" type="number" min="1" max="60" style="width:90px"
-                 :disabled="savingCheck" @change="saveVstudyCheck" />
+                 :disabled="savingCheck || !vstudyCheck.camEnabled" @change="saveVstudyCheck" />
           <span class="muted" style="font-size:12px; margin:0">分钟（默认 3，可填 1~60）——视频播放中每这么多分钟截一张本机摄像头画面，文件名 = 日期时间 + 播放的视频名称</span>
         </div>
       </div>
@@ -605,7 +609,7 @@ onMounted(async () => {
   try { const ur = await api.get('/settings/upload-root'); uploadRoot.value = { dir: ur.dir || '' }; } catch {}
   try { const lb = await api.get('/settings/local-base'); localBase.value = { base: lb.base || '' }; } catch {}
   try { if (isAdmin.value) { const vc = await api.get('/vc/config'); vcRoot.value = { dir: vc.root || '', ok: !!vc.root_ok }; } } catch {}
-  try { if (isAdmin.value) { const chk = await api.get('/settings/vstudy-check'); vstudyCheck.value = { enabled: !!chk.enabled, camInterval: Number(chk.cam_interval_min) || 3 }; } } catch {}
+  try { if (isAdmin.value) { const chk = await api.get('/settings/vstudy-check'); vstudyCheck.value = { enabled: !!chk.enabled, camEnabled: !!chk.cam_enabled, camInterval: Number(chk.cam_interval_min) || 3 }; } } catch {}
   try { if (isAdmin.value) { const la = await api.get('/settings/lan-addrs'); lanAddrs.value = la.addrs || []; } } catch {}
   try { if (isAdmin.value) { const dl = await api.get('/dingtalk/login-config'); ddLogin.value = { corp_id: dl.corp_id || '', app_key: dl.app_key || '', app_secret: dl.app_secret || '' }; } } catch {}
   // 免登是否已启用（管理员参数齐=启用），状态行展示用
@@ -785,22 +789,28 @@ async function saveLocalBase() {
   } catch (e) { flash('保存失败：' + e.message, 'err'); }
 }
 
-// 视频学习检查（v1.13.4，仅管理员）：关闭后「视频教学」播放中不再弹注意力检测、也不扣学时
-// v1.13.8：多一项「摄像头截图保存频率（分钟）」——「学习监控状态」按它定时截图，默认 3 分钟
-const vstudyCheck = ref({ enabled: true, camInterval: 3 });
+// 视频学习检查（v1.13.4，仅管理员）：两个开关各自独立
+//   enabled     = 注意力检测（播放中弹窗 + 学时扣减）
+//   camEnabled  = 摄像头监控（「学习监控状态」小窗 + 定时截图，v1.13.8 引入，v1.13.9 起与检测拆开）
+//   一次 POST 同时带两个字段 + 频率；服务端按「传了才动」逐字段写，互不干扰
+const vstudyCheck = ref({ enabled: true, camEnabled: true, camInterval: 3 });
 const savingCheck = ref(false);
 async function saveVstudyCheck() {
   savingCheck.value = true;
   try {
     const r = await api.post('/settings/vstudy-check', {
       enabled: vstudyCheck.value.enabled,
+      cam_enabled: vstudyCheck.value.camEnabled,
       cam_interval_min: vstudyCheck.value.camInterval,
     });
     vstudyCheck.value.enabled = !!r.enabled;
+    vstudyCheck.value.camEnabled = !!r.cam_enabled;
     vstudyCheck.value.camInterval = Number(r.cam_interval_min) || 3;
-    flash(r.enabled
-      ? `已开启视频学习检查：播放中会弹出注意力检测，摄像头每 ${vstudyCheck.value.camInterval} 分钟截一张图`
-      : '已关闭视频学习检查：播放中不再弹出检测、不扣减学时，也不再开摄像头截图');
+    const parts = [
+      vstudyCheck.value.enabled ? '注意力检测已开（播放中会弹窗、未点按规则扣学时）' : '注意力检测已关（不弹窗、不扣学时）',
+      vstudyCheck.value.camEnabled ? `摄像头监控已开（每 ${vstudyCheck.value.camInterval} 分钟截一张图）` : '摄像头监控已关（不开摄像头、不截图）',
+    ];
+    flash('已保存：' + parts.join('；') + '。');
   } catch (e) { flash('保存失败：' + e.message, 'err'); }
   savingCheck.value = false;
 }

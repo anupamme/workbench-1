@@ -92,7 +92,7 @@
         </div>
 
         <div class="vs-main">
-          <!-- 右上：视频 / 音频播放器 + 右侧「学习监控状态」小窗 -->
+          <!-- 右上：视频 / 音频播放器（占满主区宽度；监控小窗已拆到最右侧独立栏位，不再挤这里） -->
           <div class="card zone player-zone">
             <div v-if="curMedia" class="zone-head">
               🎬 {{ curMedia.name }}
@@ -117,74 +117,6 @@
                   <span class="muted ext-tip">HEVC / 10bit / 4K 请用外部播放器（浏览器解不动）；首次使用先<a href="#" @click.prevent="dlExtSetup">⬇ 安装联动脚本</a>（自动识别已装的播放器，免管理员）</span>
                 </div>
                 <div v-if="!curMedia" class="ph">🎞 视频播放区（mp4 · flv · mkv）／ 🎵 音频（mp3）<br><span style="font-size:12px">在左侧目录点击媒体文件开始播放（按文件真实容器选播放方式，扩展名写错也能播）</span></div>
-              </div>
-
-              <!-- 学习监控状态（v1.13.8）：视频一开播就打开本机摄像头（320×240），定时截图存服务器 -->
-              <div class="monitor">
-                <div class="mon-title">📹 学习监控状态</div>
-                <div class="cam-box">
-                  <video ref="camEl" class="cam" :class="{ hide: camState !== 'on' }" autoplay muted playsinline></video>
-                  <div v-if="camState !== 'on'" class="cam-cover">
-                    <div class="cam-ph">{{ camState === 'starting' ? '摄像头启动中…' : '摄像头未开启' }}</div>
-                    <div v-if="camMsg" class="cam-msg">{{ camMsg }}</div>
-                  </div>
-                </div>
-                <div class="cam-hint">
-                  <template v-if="!checkEnabled">「视频学习检查」已关闭：不弹注意力检测，也不开摄像头、不截图（可在 设置 → 常规设置 → 视频学习检查 打开）。</template>
-                  <template v-else-if="camState === 'on'">本机摄像头已开启（320×240，仅本地预览）。视频播放中每 <b>{{ camIntervalMin }}</b> 分钟自动截一张图存到服务器（暂停时不截），文件名 = 日期时间 + 播放的视频名称。</template>
-                  <template v-else>点左侧媒体文件播放时，会自动打开本机摄像头并按每 {{ camIntervalMin }} 分钟截一张图（需在浏览器弹窗里允许使用摄像头）。</template>
-                </div>
-              </div>
-            </div>
-
-            <!-- 截图流水（v1.13.8）：历史截图路径，默认每页 10 行，管理员可多选删除 -->
-            <div class="shots">
-              <div class="shots-head">
-                <b>截图流水</b>
-                <select v-if="isAdmin" v-model="shotUid" class="mini" @change="loadShots(1)">
-                  <option value="all">全部用户</option>
-                  <option value="me">仅我自己</option>
-                  <option v-for="u in shots.users" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
-                </select>
-                <span class="grow"></span>
-                <button v-if="isAdmin" class="small del" :disabled="!shotSel.length" @click="delShots()">🗑 删除选中（{{ shotSel.length }}）</button>
-                <span class="muted">每页</span>
-                <select v-model.number="shotSize" class="mini" @change="loadShots(1)">
-                  <option v-for="n in SHOT_SIZES" :key="n" :value="n">{{ n }}</option>
-                </select>
-                <span class="muted">行</span>
-              </div>
-              <div class="shots-wrap">
-                <table class="shot-tbl">
-                  <thead>
-                    <tr>
-                      <th v-if="isAdmin" class="ck"><input type="checkbox" :checked="allSel" @change="toggleAll($event)" /></th>
-                      <th>截图时间</th>
-                      <th v-if="isAdmin">用户</th>
-                      <th>播放的视频</th>
-                      <th>保存路径</th>
-                      <th class="op">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="r in shots.rows" :key="r.id">
-                      <td v-if="isAdmin" class="ck"><input v-model="shotSel" type="checkbox" :value="r.id" /></td>
-                      <td>{{ r.created_at }}</td>
-                      <td v-if="isAdmin">{{ r.user_name }}</td>
-                      <td class="el" :title="r.video">{{ r.video }}</td>
-                      <td class="el" :title="r.path">{{ r.path }}</td>
-                      <td class="op"><a href="#" @click.prevent="viewShot(r)">查看</a></td>
-                    </tr>
-                    <tr v-if="!shots.rows.length">
-                      <td :colspan="isAdmin ? 6 : 4" class="none">{{ shotsLoading ? '加载中…' : '暂无截图——视频播放中每 ' + camIntervalMin + ' 分钟会自动截一张' }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div class="shots-foot">
-                <span class="muted">共 {{ shots.total }} 条 · 第 {{ shots.page }} / {{ shotPages }} 页</span>
-                <button class="small" :disabled="shots.page <= 1" @click="loadShots(shots.page - 1)">← 上一页</button>
-                <button class="small" :disabled="shots.page >= shotPages" @click="loadShots(shots.page + 1)">下一页 →</button>
               </div>
             </div>
           </div>
@@ -211,6 +143,78 @@
             <div v-else class="ph">📄 文档预览区（PDF · Word · Excel · 图片 · TXT）<br><span style="font-size:12px">在左侧目录点击文档文件在此打开</span></div>
           </div>
         </div>
+
+        <!-- 学习监控栏位（v1.13.8 建、v1.13.9 拆成独立栏）：页面最右侧那一整条的空白正好用上——
+             上面是摄像头小窗，下面就是截图流水；**不占播放区的宽度，也不压住下方的文档预览区**。
+             v1.13.9 起摄像头由自己的开关「摄像头监控」控制，与「注意力检测」各自独立、互不联动 -->
+        <div class="card mon-col">
+          <div class="monitor">
+            <div class="mon-title">📹 学习监控状态</div>
+            <div class="cam-box">
+              <video ref="camEl" class="cam" :class="{ hide: camState !== 'on' }" autoplay muted playsinline></video>
+              <div v-if="camState !== 'on'" class="cam-cover">
+                <div class="cam-ph">{{ camState === 'starting' ? '摄像头启动中…' : (camEnabled ? '摄像头未开启' : '摄像头监控已关闭') }}</div>
+                <div v-if="camMsg" class="cam-msg">{{ camMsg }}</div>
+              </div>
+            </div>
+            <div class="cam-hint">
+              <template v-if="!camEnabled">「摄像头监控」已关闭：不开摄像头、不截图（可在 设置 → 常规设置 → 视频学习检查 → 摄像头监控 打开）。注意力检测不受影响。</template>
+              <template v-else-if="camState === 'on'">本机摄像头已开启（320×240，仅本地预览）。视频播放中每 <b>{{ camIntervalMin }}</b> 分钟自动截一张图存到服务器（暂停时不截），文件名 = 日期时间 + 播放的视频名称。</template>
+              <template v-else>点左侧媒体文件播放时，会自动打开本机摄像头并按每 {{ camIntervalMin }} 分钟截一张图（需在浏览器弹窗里允许使用摄像头）。</template>
+            </div>
+          </div>
+
+          <!-- 截图流水（v1.13.8）：历史截图路径，默认每页 10 行，管理员可多选删除 -->
+          <div class="shots">
+            <div class="shots-head">
+              <b>截图流水</b>
+              <select v-if="isAdmin" v-model="shotUid" class="mini" @change="loadShots(1)">
+                <option value="all">全部用户</option>
+                <option value="me">仅我自己</option>
+                <option v-for="u in shots.users" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+              </select>
+              <span class="grow"></span>
+              <button v-if="isAdmin" class="small del" :disabled="!shotSel.length" @click="delShots()">🗑 删除选中（{{ shotSel.length }}）</button>
+              <span class="muted">每页</span>
+              <select v-model.number="shotSize" class="mini" @change="loadShots(1)">
+                <option v-for="n in SHOT_SIZES" :key="n" :value="n">{{ n }}</option>
+              </select>
+              <span class="muted">行</span>
+            </div>
+            <div class="shots-wrap">
+              <table class="shot-tbl">
+                <thead>
+                  <tr>
+                    <th v-if="isAdmin" class="ck"><input type="checkbox" :checked="allSel" @change="toggleAll($event)" /></th>
+                    <th>截图时间</th>
+                    <th v-if="isAdmin">用户</th>
+                    <th>播放的视频</th>
+                    <th>保存路径</th>
+                    <th class="op">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in shots.rows" :key="r.id">
+                    <td v-if="isAdmin" class="ck"><input v-model="shotSel" type="checkbox" :value="r.id" /></td>
+                    <td>{{ r.created_at }}</td>
+                    <td v-if="isAdmin">{{ r.user_name }}</td>
+                    <td class="el" :title="r.video">{{ r.video }}</td>
+                    <td class="el" :title="r.path">{{ r.path }}</td>
+                    <td class="op"><a href="#" @click.prevent="viewShot(r)">查看</a></td>
+                  </tr>
+                  <tr v-if="!shots.rows.length">
+                    <td :colspan="isAdmin ? 6 : 4" class="none">{{ shotsLoading ? '加载中…' : '暂无截图——视频播放中每 ' + camIntervalMin + ' 分钟会自动截一张' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="shots-foot">
+              <span class="muted">共 {{ shots.total }} 条 · 第 {{ shots.page }} / {{ shotPages }} 页</span>
+              <button class="small" :disabled="shots.page <= 1" @click="loadShots(shots.page - 1)">← 上一页</button>
+              <button class="small" :disabled="shots.page >= shotPages" @click="loadShots(shots.page + 1)">下一页 →</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -227,7 +231,7 @@
 // 视频教学主面板：开始学习 → 大按钮选学年/学科 → 左目录树 + 右上媒体播放 + 右下文档预览。
 // 进度口径：position=历史最大播放位置（算完成%）；watched=实际观看增量（算学时），15 秒一批上报。
 // 学习会话：每打开一个文件 = 一次会话（/vstudy/session/*），开始页下方「历史学习列表」按会话展示明细。
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 import { api, rawUrl } from '../api';
 import { localState, probeLocalBase, sameOriginBase } from '../utils/localBase';
 import VsTreeNode from './VsTreeNode.vue';
@@ -235,6 +239,10 @@ import VsTreeNode from './VsTreeNode.vue';
 const getToken = () => localStorage.getItem('wb_token') || '';
 // 管理员（截图流水里才有「多选删除」与「全部用户」切换）——与 VideoCenterPanel 同一判据
 const isAdmin = (() => { try { return (JSON.parse(localStorage.getItem('wb_user') || '{}') || {}).role === 'admin'; } catch { return false; } })();
+// 本页要占到窗口右边去（v1.13.9）：工作台其它页面都被 App.vue 的 .main 封在 1200px 宽里，
+// 大显示器上右边会空掉一大条——正是「学习监控」要用的地方。这里借 lifeOS/AI 那套开关（mainFull）
+// 在本面板挂载期间放开宽度上限，切走即还原（本面板是 v-else-if 挂载，切页签就会卸载）。
+const mainFull = inject('wbMainFull', null);
 const stage = ref('idle');            // idle → year → subject → browse
 const cfg = ref({ root: '', root_ok: false, years: [], subjects: [] });
 const year = ref('');
@@ -270,8 +278,10 @@ let docSessionId = 0;                // 当前文档的学习会话 id
 const IMG_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'bmp'];
 const isImage = (e) => IMG_EXTS.includes(e);
 
-// 视频学习检查开关 / 摄像头截图频率（来自 /vstudy/config）——检查关掉时摄像头也不开、不截图
+// 两个开关各自独立（都来自 /vstudy/config，设置页仅管理员可改）：
+//   check_enabled = 注意力检测（弹窗 + 学时扣减）；cam_enabled = 摄像头监控（小窗 + 定时截图）
 const checkEnabled = computed(() => cfg.value.check_enabled !== false);
+const camEnabled = computed(() => cfg.value.cam_enabled !== false);
 const camIntervalMin = computed(() => Math.max(1, Number(cfg.value.cam_interval_min) || 3));
 
 // ---------- 本地直连（大文件走局域网） ----------
@@ -540,8 +550,9 @@ function attnMaybeShow() {
   if (track.watched >= attnNextAt) showAttn();
 }
 function showAttn() {
-  // 设置页「视频学习检查」关闭时整个检测停用（不弹、不扣）——服务端 /vstudy/attention 同样兜底
-  if (cfg.value.check_enabled === false) return;
+  // 设置页关掉「注意力检测」时整个检测停用（不弹、不扣）——服务端 /vstudy/attention 同样兜底。
+  // 注意这里只看 check_enabled（注意力检测）：摄像头开关与它无关（v1.13.9 拆开）
+  if (!checkEnabled.value) return;
   attnLeft.value = 5;
   // 随机位置：整个页面视口范围内（fixed 定位），避开边缘
   attnX.value = Math.round(12 + Math.random() * Math.max(20, window.innerWidth - 110));
@@ -663,7 +674,7 @@ function camPeriodMs() {
 }
 async function startCam() {
   if (camState.value === 'on' || camState.value === 'starting') return;
-  if (!checkEnabled.value) return;
+  if (!camEnabled.value) return;   // 只看摄像头自己的开关（v1.13.9 与注意力检测分开）
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     camState.value = 'error';
     camMsg.value = '当前浏览器不支持摄像头（需 Chrome/Edge 等现代浏览器，且页面必须是 https 或 localhost）。';
@@ -701,7 +712,7 @@ async function camTick() {
 // 抓一帧本机摄像头画面 → JPEG → POST 给服务端落盘（文件名由服务端按「日期时间_视频名」生成）
 async function shotOnce() {
   const v = videoEl.value, c = camEl.value;
-  if (!checkEnabled.value || !curMedia.value || !c || !c.videoWidth) return;
+  if (!camEnabled.value || !curMedia.value || !c || !c.videoWidth) return;
   if (!v || v.paused) return;      // 视频没在播就不截（暂停期间不产生无效画面）
   const cv = document.createElement('canvas');
   cv.width = 320; cv.height = 240;   // 分辨率只要 320
@@ -754,6 +765,7 @@ function stopAll() {
   if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
 }
 onMounted(() => {
+  if (mainFull) mainFull.value = true;   // 本页占满窗口宽度（大屏上右侧那条给学习监控用）
   loadCfg();
   loadHist(1);
   // 本地直连：App 启动已探测过，这里取共享结果；缓存过期时补测（模块内单飞去重）
@@ -782,6 +794,7 @@ onMounted(() => {
   window.addEventListener('beforeunload', beaconHandler);
 });
 onBeforeUnmount(() => {
+  if (mainFull) mainFull.value = false;  // 切走还原（其它页面照旧封在 1200px）
   window.removeEventListener('beforeunload', beaconHandler);
   window.removeEventListener('wb-local-base', onLocalEvt);
   stopAll();
@@ -816,7 +829,7 @@ onBeforeUnmount(() => {
 .lb { margin-left: auto; font-size: 11.5px; padding: 2px 10px; border-radius: 10px; border: 1px solid var(--border); color: var(--text3); }
 .lb.ok { color: var(--green); border-color: var(--green); }
 .vs-body { display: flex; gap: 12px; align-items: stretch; }
-.tree { width: 25%; min-width: 230px; max-height: 72vh; overflow: auto; padding: 10px; }
+.tree { width: 18%; min-width: 200px; max-width: 340px; max-height: 72vh; overflow: auto; padding: 10px; }
 .tree-root { font-weight: 600; padding: 5px 6px; cursor: pointer; border-radius: 6px; }
 .tree-root:hover { background: var(--bg3); }
 .tree-children { margin-left: 6px; }
@@ -826,11 +839,13 @@ onBeforeUnmount(() => {
 .zone-head .grow { flex: 1; }
 .zone-body { display: flex; gap: 12px; align-items: flex-start; }
 .player-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.player-col video { width: 100%; max-height: 46vh; background: #000; border-radius: 8px; }
-/* 学习监控状态（v1.13.8）：播放画面右侧的小窗，宽度固定 320（= 截图分辨率，约主画面 1/4） */
-.monitor { flex: 0 0 320px; width: 320px; display: flex; flex-direction: column; gap: 8px; }
+.player-col video { width: 100%; max-height: 56vh; background: #000; border-radius: 8px; }
+/* 学习监控栏（v1.13.9）：从播放卡片里搬出来，独占页面最右一列（大屏上原本空着的那条）。
+   摄像头小窗在上、截图流水在下；**宽度由这一列决定，不再从播放区里抢宽度，也不压住下方文档预览区** */
+.mon-col { flex: 0 0 28%; min-width: 360px; max-width: 620px; align-self: flex-start; display: flex; flex-direction: column; gap: 10px; }
+.monitor { display: flex; flex-direction: column; gap: 8px; }
 .mon-title { font-size: 13.5px; font-weight: 600; }
-.cam-box { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #111; border-radius: 8px; overflow: hidden; }
+.cam-box { position: relative; width: 100%; max-width: 520px; aspect-ratio: 4 / 3; background: #111; border-radius: 8px; overflow: hidden; }
 .cam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); } /* 镜像：像照镜子，符合直觉 */
 .cam.hide { visibility: hidden; }
 .cam-cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px; text-align: center; background: var(--bg3); }
@@ -838,8 +853,8 @@ onBeforeUnmount(() => {
 .cam-msg { font-size: 11.5px; color: var(--red); line-height: 1.6; }
 .cam-hint { font-size: 11.5px; color: var(--text3); line-height: 1.7; }
 .cam-hint b { color: var(--text2); }
-/* 截图流水：全宽表格（在播放区下方，管理员多选删除 + 前后翻页） */
-.shots { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+/* 截图流水：监控列里的小窗下方（管理员多选删除 + 前后翻页）；列窄，长路径截断 + 横向可滚 */
+.shots { border-top: 1px solid var(--border); padding-top: 10px; }
 .shots-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .shots-head .grow { flex: 1; }
 .mini { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12.5px; }
@@ -850,13 +865,20 @@ onBeforeUnmount(() => {
 .shot-tbl th { text-align: left; font-weight: 500; color: var(--text3); padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .shot-tbl td { padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 .shot-tbl th.ck, .shot-tbl td.ck { width: 28px; }
-.shot-tbl td.el { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.shot-tbl td.el { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .shot-tbl td.none { color: var(--text3); text-align: center; padding: 16px; white-space: normal; }
 .shot-tbl th.op, .shot-tbl td.op { width: 48px; }
 .shot-tbl td.op a { color: var(--accent); }
-.shots-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.shots-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .shots-foot button:disabled { opacity: .45; cursor: default; }
-@media (max-width: 1100px) { .zone-body { flex-wrap: wrap; } .monitor { flex: 1 1 100%; width: 100%; max-width: 420px; } }
+/* 不够宽的窗口（笔记本 1500 宽也在此列）兜底：监控列整列落到最下方，回到「播放 → 文档 → 监控」的竖排，
+   宁可把监控压到下面，也不横向挤压播放区与文档预览区；三列并排只在 ≥1600 宽的大屏上生效 */
+@media (max-width: 1600px) {
+  .vs-body { flex-wrap: wrap; }
+  .tree { flex: 1 1 220px; }
+  .mon-col { flex: 1 1 100%; max-width: none; }
+  .cam-box { max-width: 480px; }
+}
 /* 外部播放器按钮行（v1.8.7）：HEVC 10bit/4K 交给本地播放器 */
 .ext-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0 2px; }
 .ext-row .ext-tip { font-size: 12px; }

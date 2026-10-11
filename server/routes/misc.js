@@ -403,12 +403,13 @@ router.post('/settings/local-base', (req, res) => {
   res.json({ ok: true, base });
 });
 
-// ---------- 视频学习检查（注意力检测 + 摄像头截图，全局，仅管理员可改） ----------
-// 开启：学习 →「视频教学」播放中每隔 3~5 分钟在页面随机位置弹出 5 秒倒计时图标，
-//       未点确认按规则扣减学时（首次扣一半、持续未点扣光本会话），扣减明细进「学时记账」；
-//       同时右侧「学习监控状态」会开本机摄像头，按下面的频率定时截图存服务器（v1.13.8）。
-// 关闭：不再弹出检测，也不做学时（教学积分）扣减，摄像头截图一并停用——
-//       前端不再弹、不再截，服务端 /vstudy/attention 与 POST /vstudy/cam 双双兜底。
+// ---------- 视频学习检查（注意力检测 + 摄像头监控，全局，仅管理员可改；两个开关互相独立） ----------
+// 注意力检测（vstudy_check_enabled）：学习 →「视频教学」播放中每隔 3~5 分钟在页面随机位置弹出 5 秒
+//   倒计时图标，未点确认按规则扣减学时（首次扣一半、持续未点扣光本会话），明细进「学时记账」。
+// 摄像头监控（vstudy_cam_enabled，v1.13.9 起独立）：播放中右侧「学习监控状态」开本机摄像头，
+//   按下面的频率定时截图存服务器（v1.13.8 上线时两者共用一个开关，v1.13.9 按用户要求拆开）。
+// 两个开关各自只关自己那一半：关检测仍照常截图、关摄像头仍照常弹窗扣学时。
+// 前端不弹/不截，服务端 /vstudy/attention 与 POST /vstudy/cam 双双兜底。
 const CAM_MIN_DEFAULT = 3;
 // 合法区间 1~60 分钟：越界收敛到边界（填 0 存 1、填 99 存 60），非数字才回默认 3——
 // 比「越界就悄悄改回默认」友好：用户填 99 时预期是「最大」，不是「重置成 3」
@@ -420,21 +421,29 @@ function camMinValid(v) {
 router.get('/settings/vstudy-check', (req, res) => {
   res.json({
     enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0',
+    cam_enabled: getSetting(db, 'vstudy_cam_enabled', '1') !== '0',
     cam_interval_min: camMinValid(getSetting(db, 'vstudy_cam_interval_min', CAM_MIN_DEFAULT)),
   });
 });
 router.post('/settings/vstudy-check', (req, res) => {
   if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可配置视频学习检查' });
   const b = req.body || {};
-  const v = b.enabled;
-  const enabled = !(v === false || v === 0 || v === '0'); // 缺省视为开启
-  setSetting(db, 'vstudy_check_enabled', enabled ? '1' : '0');
+  // 三个字段各自「传了才动」：只切摄像头开关不会顺手改掉注意力检测，反之亦然
+  // （v1.13.9 之前 enabled 是缺省即开启的语义，面板同时发两个开关，故一并改成显式传参）
+  const truthy = (v) => !(v === false || v === 0 || v === '0');
+  if (b.enabled !== undefined) setSetting(db, 'vstudy_check_enabled', truthy(b.enabled) ? '1' : '0');
+  if (b.cam_enabled !== undefined) setSetting(db, 'vstudy_cam_enabled', truthy(b.cam_enabled) ? '1' : '0');
   let cam = camMinValid(getSetting(db, 'vstudy_cam_interval_min', CAM_MIN_DEFAULT));
   if (b.cam_interval_min !== undefined) {   // 缺省不动（面板只切开关时不会把频率带回默认值）
     cam = camMinValid(b.cam_interval_min);
     setSetting(db, 'vstudy_cam_interval_min', String(cam));
   }
-  res.json({ ok: true, enabled, cam_interval_min: cam });
+  res.json({
+    ok: true,
+    enabled: getSetting(db, 'vstudy_check_enabled', '1') !== '0',
+    cam_enabled: getSetting(db, 'vstudy_cam_enabled', '1') !== '0',
+    cam_interval_min: cam,
+  });
 });
 
 // ---------- 多平台访问地址（自 family-learning v3.0 移植；「设置 → 多平台」分享访问用） ----------
