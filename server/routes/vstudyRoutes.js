@@ -11,7 +11,9 @@ const { db, getSetting, setSetting } = require('../db');
 const router = express.Router();
 
 // ---------- 扩展名分类（前端面板同名常量保持一致） ----------
-const MEDIA_EXTS = ['mp4', 'flv', 'mp3', 'webm', 'm4v', 'm4a', 'wav', 'aac', 'ogg'];
+// v1.13.7：把嗅探器认识的容器都纳进「媒体」——mkv/avi/mov/ts/wmv/mpeg/flac 以前归 other，
+// 在树里点了没反应、视频中心还被整条滤掉；现在它们照样进树、点开由真实容器决定播放方式（多半是「用外部播放器」）。
+const MEDIA_EXTS = ['mp4', 'flv', 'mp3', 'webm', 'm4v', 'm4a', 'wav', 'aac', 'ogg', 'mkv', 'avi', 'mov', 'ts', 'wmv', 'mpg', 'mpeg', 'flac'];
 const DOC_EXTS = ['pdf', 'doc', 'docx', 'txt', 'md', 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'xls', 'xlsx', 'csv'];
 const MIME = {
   mp4: 'video/mp4', flv: 'video/x-flv', webm: 'video/webm', m4v: 'video/mp4',
@@ -22,8 +24,94 @@ const MIME = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   xls: 'application/vnd.ms-excel',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  avi: 'video/x-msvideo', wmv: 'video/x-ms-wmv', mpg: 'video/mpeg', mpeg: 'video/mpeg',
+  ts: 'video/mp2t', mov: 'video/mp4', flac: 'audio/flac',
 };
 
+// ---------- 真实容器嗅探（扩展名经常说谎，v1.13.7） ----------
+// 实测生产（2026-10-11）：「学习 → 视频教学」里 46 个 .flv **全部是 MP4**（ftyp/isom/avc1/mp41，moov 在文件头）。
+// 这种文件交给 flv.js 必卡：它按 FLV tag 逐字节找 'FLV\x01' 头，读到的却是 ftyp box → 永远转不出画面，
+// 页面就停在「一直加载」转圈。浏览器 <video> 原生能解 mp4，所以播放前一律先看魔数，不信扩展名。
+const EXT_BOX = {
+  mp4: 'mp4', m4v: 'mp4', mov: 'mp4', flv: 'flv', webm: 'webm', mkv: 'mkv',
+  mp3: 'mp3', m4a: 'mp4', wav: 'wav', aac: 'aac', ogg: 'ogg',
+};
+function sniffBox(abs) {
+  let fd;
+  try {
+    fd = fs.openSync(abs, 'r');
+    const b = Buffer.alloc(64);
+    const n = fs.readSync(fd, b, 0, 64, 0);
+    if (n >= 8) {
+      const s4 = b.toString('latin1', 0, 4);
+      if (s4.startsWith('FLV')) return 'flv';
+      if (b.toString('latin1', 4, 8) === 'ftyp') return 'mp4';   // ISO BMFF：mp4/m4v/mov 同族
+      if (s4 === 'RIFF') return 'avi';
+      if (s4 === 'OggS') return 'ogg';
+      if (s4 === 'fLaC') return 'flac';
+      if ((b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) === 0x1a45dfa3) {
+        // EBML 头里 DocType 区分 webm / matroska——两者魔数相同，但浏览器只认 webm，MKV 必须挡下
+        const head = b.toString('latin1');
+        if (head.includes('webm')) return 'webm';
+        return 'mkv';
+      }
+      if (b[0] === 0x30 && b[1] === 0x26 && b[2] === 0xb2 && b[3] === 0x75) return 'wmv';
+      if (s4 === 'ID3' || s4 === '\x00\x00\x01\xba') return 'mp3';
+      if (b[0] === 0x47) return 'ts';
+    }
+  } catch { /* 读不到就走扩展名 */ } finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* 已关 */ } } }
+  return '';
+}
+// 真实容器优先，嗅不出来才退回扩展名（新格式/空文件不能因此判死）
+function boxOf(abs, ext) { return sniffBox(abs) || EXT_BOX[String(ext || '').toLowerCase()] || ''; }
+
+// 能不能在浏览器里原生播（MSE / <video> 都算原生；mkv/avi/wmv 这类只能交给外部播放器）
+function nativeOk(box) { return ['mp4', 'webm', 'mp3', 'ogg', 'wav', 'aac'].includes(box); }
+
+// ---------- FLV 编码嗅探（真 FLV 也要看是不是浏览器解得动的编码） ----------
+// flv.js 靠 MSE 转封装，只支持 AVC(H.264) + AAC；H.265 的 FLV（enhanced-rtmp，CodecID=12 带 fourcc）它直接
+// 「Codec not supported」；AVC 里的 High 10 / 4:2:2 / 4:4:4（profile 110/122/244）浏览器也解不了。
+// 这些情况都要在点开文件时就说清楚，而不是让页面空转。
+const FLV_VIDEO_CODEC = { 2: 'h263', 3: 'screen', 4: 'vp6', 7: 'avc', 12: 'enhanced' };
+function flvCodec(abs) {
+  let fd;
+  try {
+    fd = fs.openSync(abs, 'r');
+    const b = Buffer.alloc(262144);           // 256KB：够扫过 onMetaData 脚本块与首个关键帧
+    const n = fs.readSync(fd, b, 0, b.length, 0);
+    if (n < 13 || !b.toString('latin1', 0, 3).startsWith('FLV')) return null;
+    // 首个 tag 的偏移 = DataOffset(字段值通常 9) + 4（紧跟其后的 PreviousTagSize0）
+    let off = (b.readUInt32BE(5) || 9) + 4;
+    let guard = 0;
+    while (off + 15 <= n && guard++ < 500) {
+      const type = b[off];
+      const size = (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3];
+      const body = off + 11;
+      if (body + size > n) break;
+      if (type === 9 && size > 1) {
+        const id = b[body] & 0x0f;
+        const kind = FLV_VIDEO_CODEC[id] || 'other';
+        if (kind === 'enhanced') {            // CodecID 12：body[1..5] 是 fourcc
+          const fourcc = b.toString('latin1', body + 1, body + 5);
+          if (fourcc === 'hvc1' || fourcc === 'hev1') return { kind: 'hevc', fourcc };
+          if (fourcc === 'av01') return { kind: 'av1', fourcc };
+          if (fourcc === 'vp09') return { kind: 'vp9', fourcc };
+          return { kind: 'other', fourcc };
+        }
+        if (kind === 'avc') {
+          const pkt = b[body + 1];
+          // AVC 序列头（AVCPacketType=0）：body[5]=configurationVersion(恒 1)，body[6]=AVCProfileIndication，
+          // 要判 High 10/4:2:2/4:4:4 必须读 body[6]（读成 body[5] 会恒得 1，永远拦不住）
+          if (pkt === 0 && size >= 9) return { kind: 'avc', profile: b[body + 6] };
+          return { kind: 'avc', profile: 0 };
+        }
+        return { kind };
+      }
+      off = body + size + 4;
+    }
+  } catch { /* 解析失败按未知 */ } finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* 已关 */ } } }
+  return null;
+}
 const DEFAULT_YEARS = ['2025-2026 学年', '2026-2027 学年'];
 const DEFAULT_SUBJECTS = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治'];
 
@@ -108,7 +196,11 @@ router.get(['/vstudy/tree', '/vc/tree'], (req, res) => {
     let isDir = false, size = 0;
     try { const st = fs.statSync(p); isDir = st.isDirectory(); size = st.size; } catch { continue; }
     const ext = isDir ? '' : (name.split('.').pop() || '').toLowerCase();
-    entries.push({ name, is_dir: isDir, ext, size, kind: isDir ? 'dir' : MEDIA_EXTS.includes(ext) ? 'media' : DOC_EXTS.includes(ext) ? 'doc' : 'other' });
+    const kind = isDir ? 'dir' : MEDIA_EXTS.includes(ext) ? 'media' : DOC_EXTS.includes(ext) ? 'doc' : 'other';
+    // box：媒体文件的**真实容器**（只读 16 字节魔数）——扩展名说谎时前端靠它选播放器，
+    // 典型：.flv 实为 MP4（必须走原生 <video>，不能交给 flv.js）。列表里带上，播放时就不用再问一次。
+    const box = kind === 'media' ? boxOf(p, ext) : '';
+    entries.push({ name, is_dir: isDir, ext, size, kind, ...(box ? { box, native: nativeOk(box) } : {}) });
   }
   entries.sort((a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name, 'zh'));
   // 视频中心只列目录与媒体文件（无文档预览，列出来点了也没反应）
@@ -143,7 +235,9 @@ router.get(['/vstudy/file', '/vc/file'], (req, res) => {
   try { st = fs.statSync(full); } catch { return res.status(404).json({ error: '文件不存在' }); }
   if (st.isDirectory()) return res.status(400).json({ error: '这是一个目录' });
   const ext = (full.split('.').pop() || '').toLowerCase();
-  const mime = MIME[ext] || 'application/octet-stream';
+  // 按**真实容器**给 Content-Type（v1.13.7）：.flv 实为 MP4 时报 video/mp4，浏览器与外部播放器都按真身份处理
+  const box = sniffBox(full);
+  const mime = MIME[box] || MIME[ext] || 'application/octet-stream';
   const name = path.basename(full);
   res.setHeader('Content-Type', mime);
   res.setHeader('Accept-Ranges', 'bytes');
@@ -181,7 +275,32 @@ router.get(['/vstudy/file', '/vc/file'], (req, res) => {
   }
 });
 
-// ---------- 学时流水结算（vstudy_ledger） ----------
+// ---------- 播放前探测（v1.13.7）：这个文件到底能不能在浏览器里播 ----------
+// 返回 { box, native, ext, codec? }：box = 真实容器（不信扩展名），native = 能否用 <video> 原生播；
+// 真 FLV 再给 codec（avc / hevc / av1 / vp9 / h263 / other + profile），前端据此决定走 flv.js、
+// 还是直接提示「请用 PotPlayer/VLC」——不让页面在「一直加载」里空转。
+router.get(['/vstudy/probe', '/vc/probe'], (req, res) => {
+  const full = resolveInRoot(req.query.path || '', scopeOf(req));
+  if (!full) return res.status(400).json({ error: '路径越界或未配置根目录' });
+  let st;
+  try { st = fs.statSync(full); } catch { return res.status(404).json({ error: '文件不存在' }); }
+  if (st.isDirectory()) return res.status(400).json({ error: '这是一个目录' });
+  const ext = (full.split('.').pop() || '').toLowerCase();
+  const box = boxOf(full, ext);
+  const j = { ext, box, native: nativeOk(box), size: st.size };
+  if (box === 'flv') {
+    const c = flvCodec(full);
+    if (c) {
+      j.codec = c.kind;
+      if (c.profile) j.profile = c.profile;
+      // 浏览器解不动的三类：H.265 / AV1 / AVC High 10 及以上（profile 110/122/244）
+      j.playable = c.kind === 'avc' && !(c.profile && c.profile > 100);
+    } else { j.playable = true; }   // 解析不出来就别拦着（真 FLV 多数字段不全也能播）
+  } else {
+    j.playable = j.native;
+  }
+  res.json(j);
+});
 // 会话三列跟踪：watched_sec=累计观看；ledger_sec=已写入流水的生效秒数；penalty_sec=已扣减秒数。
 // 中途结转：未入账 = watched_sec - ledger_sec ≥ 300s 时落一笔生效流水（长视频中途退出不丢账）；
 // 关闭会话时全额结转。任意时刻 Σ(流水 delta) = ledger_sec - penalty_sec，最终收敛到 watched_sec - penalty_sec。

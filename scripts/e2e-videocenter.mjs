@@ -196,11 +196,15 @@ try {
     ok((await pm.locator('.tabs button', { hasText: '视频中心' }).count()) === 0, '未授权成员：tab 栏无「视频中心」按钮');
     await ctxM.close();
     // 授权后（上面 PUT 已加 videocenter）：按钮出现
+    // 注意：前端从登录时写进 localStorage 的 wb_user 读 allowed_tabs，必须**重新登录**拿新对象——
+    // 沿用授权前那次 login 的 user（allowed_tabs 还是旧的）按钮不会出现（这是本用例早先误红的根因）。
+    const mlg2 = await api('POST', '/api/auth/login', { body: { username: 'm1', password: 'm1-pass-123' } });
+    const MT2 = mlg2.j.b?.token || mlg2.j.token;
     const pm2 = await (await browser.newContext()).newPage();
     await pm2.context().addInitScript(([t, u]) => {
       localStorage.setItem('wb_token', t);
       localStorage.setItem('wb_user', u);
-    }, [MT, JSON.stringify(mlg.j.user || mlg.j.b?.user)]);
+    }, [MT2, JSON.stringify(mlg2.j.user || mlg2.j.b?.user)]);
     await pm2.goto(`${B}/#/smart-home`);
     await pm2.waitForSelector('.tabs button');
     ok((await pm2.locator('.tabs button', { hasText: '视频中心' }).count()) === 1, '授权后成员：tab 按钮出现');

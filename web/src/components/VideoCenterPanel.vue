@@ -43,8 +43,14 @@
             </label>
             <button class="small" @click="closeMedia">✕ 关闭</button>
           </div>
-          <video v-show="curMedia" ref="videoEl" controls controlslist="nodownload" preload="auto" @timeupdate="onTimeUpdate" @pause="flushMedia" @ended="onEnded"></video>
-          <div v-if="!curMedia" class="ph">🎞 视频播放区（mp4 · flv · webm）／ 🎵 音频（mp3）<br><span style="font-size:12px">在左侧目录点击媒体文件开始播放，进度自动记忆、下次从这里续播</span></div>
+          <video v-show="curMedia && !mediaIssue" ref="videoEl" controls controlslist="nodownload" preload="auto" @timeupdate="onTimeUpdate" @pause="flushMedia" @ended="onEnded" @error="onVideoError"></video>
+          <!-- 播不了时如实说清原因（真实容器 / 编码），外部播放器按钮行仍在，可直接转过去 -->
+          <div v-if="mediaIssue" class="media-issue">
+            <b>⚠️ 这个文件浏览器播不了</b>
+            <span>{{ mediaIssue }}</span>
+            <span class="muted">下面的 PotPlayer / VLC 按钮能原样打开服务器上的这个文件。</span>
+          </div>
+          <div v-if="!curMedia" class="ph">🎞 视频播放区（mp4 · flv · webm）／ 🎵 音频（mp3）<br><span style="font-size:12px">在左侧目录点击媒体文件开始播放，进度自动记忆、下次从这里续播（按文件真实容器选播放方式，扩展名写错也能播）</span></div>
 
           <!-- ============ 播放历史（一人一份，倒序；点任意一行即重新打开该文件） ============ -->
           <div class="his">
@@ -139,6 +145,7 @@ const playlist = ref([]);            // 当前文件夹内的媒体列表（不�
 watch(loopPlay, (v) => { try { localStorage.setItem('vc_loop', v ? '1' : '0'); } catch { /* 隐私模式 */ } });
 
 let flvPlayer = null;
+const mediaIssue = ref('');          // 播不了时的原因（真实容器/编码），空 = 正常
 let flushTimer = null;
 let track = null;                    // { last, watched, maxPos, dur }
 let beaconHandler = null;
@@ -217,7 +224,25 @@ function openFromHistory(r) {
   playMedia(rel, { name, ext, kind: 'media' });
 }
 
-// ---------- 媒体播放（mp4/mp3 原生；flv 用 flv.js 转封装）+ 断点续播 ----------
+// ---------- 媒体播放（按**真实容器**选播放器，v1.13.7）+ 断点续播 ----------
+// 与视频教学同一套规则（那边有 46 个 .flv 实为 MP4 的实例）：扩展名只作兜底，
+// 真容器由服务端魔数嗅探给出（树里的 box，或点开时的 /vc/probe）。播不了的编码直接说清楚，不留转圈的播放器。
+const EXT_BOX_FE = { mp4: 'mp4', m4v: 'mp4', mov: 'mp4', flv: 'flv', webm: 'webm', mkv: 'mkv', mp3: 'mp3', m4a: 'mp4', wav: 'wav', aac: 'aac', ogg: 'ogg' };
+const NATIVE_BOX = ['mp4', 'webm', 'mp3', 'ogg', 'wav', 'aac'];
+const BOX_LABEL = { mkv: 'Matroska(MKV)', avi: 'AVI', wmv: 'WMV', ts: 'TS', mpeg: 'MPEG', mpg: 'MPEG', flac: 'FLAC', other: '未知格式' };
+function boxOfEntry(entry) { return entry.box || EXT_BOX_FE[entry.ext] || String(entry.ext || '').toLowerCase(); }
+async function boxProbe(rel) {
+  try { return await api.get('/vc/probe?path=' + encodeURIComponent(rel)); } catch { return null; }
+}
+function issueText(info) {
+  const c = (info && info.codec) || '';
+  if (c === 'hevc') return '这个 FLV 里是 H.265（HEVC）编码，浏览器（含 flv.js 的 MSE 通道）解不了，请用下面的外部播放器。';
+  if (c === 'av1') return '这个 FLV 里是 AV1 编码，浏览器 MSE 解不了，请用下面的外部播放器。';
+  if (c === 'vp9') return '这个 FLV 里是 VP9 编码，flv.js 转不出来，请用下面的外部播放器。';
+  if (info && info.profile > 100) return `这个 FLV 是 H.264，但档次是 High 10 / 4:2:2 / 4:4:4（profile ${info.profile}），浏览器解不了，请用下面的外部播放器。`;
+  if (c === 'h263' || c === 'screen' || c === 'vp6') return `这个 FLV 用的是老编码（${c}），浏览器解不了，请用下面的外部播放器。`;
+  return '浏览器解不了这个文件（编码不受支持），请用下面的外部播放器。';
+}
 function displayPath(rel) {
   const root = (cfg.value.root || '').replace(/[\\/]+$/, '');
   return root ? root + '\\' + rel : rel; // 与 vstudy 同口径：库里存根目录开头的完整路径
@@ -232,7 +257,9 @@ async function playMedia(rel, entry) {
   flushMedia(); // 结算上一个文件的进度
   destroyFlv();
   const mySeq = ++mediaSeq;
-  curMedia.value = { rel, name: entry.name, ext: entry.ext };
+  mediaIssue.value = '';
+  let box = boxOfEntry(entry);
+  curMedia.value = { rel, name: entry.name, ext: entry.ext, box };
   const url = fileUrl(rel);
   track = { last: 0, watched: 0, maxPos: 0, dur: 0 };
   resumeInfo.value = '';
@@ -258,22 +285,46 @@ async function playMedia(rel, entry) {
       resumeInfo.value = '⏱ 已从 ' + fmtPos(seekTo) + ' 续播';
     } catch { /* 个别浏览器 seek 太早抛错，从头播 */ }
   });
-  if (entry.ext === 'flv') {
+  if (!NATIVE_BOX.includes(box)) {
+    const info = await boxProbe(rel);
+    if (mySeq !== mediaSeq) return;                    // 探测期间又换了文件 → 丢弃这次
+    if (info && info.box) { box = info.box; curMedia.value.box = box; }
+    if (box === 'flv') {
+      if (info && info.playable === false) { mediaIssue.value = issueText(info); return; }
+    } else if (!NATIVE_BOX.includes(box)) {
+      mediaIssue.value = `这个文件的真实容器是 ${BOX_LABEL[box] || box || '未知'}，浏览器不能直接播放，请用下面的外部播放器打开。`;
+      return;
+    }
+  }
+  if (box === 'flv') {
     try {
       const flvjs = (await import('flv.js')).default;
-      if (!flvjs.isSupported()) throw new Error('当前浏览器不支持 FLV 播放，请用 Chrome/Edge');
+      if (!flvjs.isSupported()) throw new Error('当前浏览器不支持 FLV 播放，请用 Chrome/Edge，或用下面的外部播放器');
       // enableStashBuffer:false —— 关掉起播前置缓冲池，收到即喂给解码器，点开就播；
       // seekType:'range' 走 206 分段按需取，拖进度条不用等整段
       flvPlayer = flvjs.createPlayer({ type: 'flv', isLive: false, url },
         { enableStashBuffer: false, stashInitialSize: 128, seekType: 'range', lazyLoad: true });
+      // flv.js 出错不再静默转圈（编码不支持/网络中断）——如实写到播放区
+      flvPlayer.on(flvjs.Events.ERROR, (type, detail) => {
+        if (!mediaIssue.value && curMedia.value) mediaIssue.value = `FLV 播放失败（${type}${detail ? '：' + detail : ''}）。若是编码不受支持，请用下面的外部播放器。`;
+      });
       flvPlayer.attachMediaElement(v);
       flvPlayer.load();
       v.play().catch(() => {});
-    } catch (e) { curMedia.value = null; alert(e.message); }
+    } catch (e) { mediaIssue.value = e.message; }
   } else {
     v.src = url;
     v.play().catch(() => {});
   }
+}
+// <video> 原生报错（网络/解码/格式）：如实写出，别让用户对着转圈猜
+function onVideoError() {
+  const v = videoEl.value;
+  if (!curMedia.value || mediaIssue.value || !v || !v.getAttribute('src')) return; // closeMedia 清 src 也会触发一次，忽略
+  const c = v.error && v.error.code;
+  mediaIssue.value = c === 2 ? '播放中读取中断（网络抖动或文件被移动）。'
+    : c === 4 ? '浏览器不认这个文件的容器/编码，请用下面的外部播放器。'
+      : '播放失败（解码错误），请用下面的外部播放器。';
 }
 function destroyFlv() {
   if (flvPlayer) { try { flvPlayer.destroy(); } catch { /* 已销毁 */ } flvPlayer = null; }
@@ -310,6 +361,7 @@ function closeMedia() {
     videoEl.value.load();
   }
   curMedia.value = null;
+  mediaIssue.value = '';
   resumeInfo.value = '';
   playlist.value = [];
   track = null;
@@ -431,6 +483,11 @@ onBeforeUnmount(() => {
 .ext-row .ext-tip { font-size: 12px; line-height: 1.7; }
 .ext-tip a { color: var(--accent); }
 .ph { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--text3); font-size: 14px; min-height: 260px; text-align: center; }
+/* 播不了时的原因块（真实容器/编码不受支持）——替代原来那个转不完的加载圈 */
+.media-issue { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 260px; padding: 16px; text-align: center; background: var(--bg3); border: 1px dashed var(--border); border-radius: 10px; }
+.media-issue b { color: var(--amber); font-size: 14px; }
+.media-issue span { color: var(--text2); font-size: 13px; max-width: 620px; line-height: 1.7; }
+.media-issue span.muted { color: var(--text3); font-size: 12px; }
 .small { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; text-decoration: none; }
 .grow { flex: 1; }
 .muted { color: var(--text3); }
