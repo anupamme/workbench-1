@@ -11,7 +11,7 @@ const storagePaths = require('./storagePaths');
 const messageService = require('./messageService');
 const dingtalkService = require('./dingtalkService');
 const aiService = require('./aiService');
-const penaltyService = require('./monitorPenaltyService'); // v1.13.5 处罚标准联动（负数兑现 + 短消息）
+const penaltyService = require('./monitorPenaltyService'); // v1.13.5 处罚标准联动（记一笔兑现扣款 + 短消息；v1.13.12 起金额记正数）
 
 const CFG_KEY = 'monitor_cfg';
 const DEFAULT_CFG = {
@@ -281,7 +281,7 @@ function alertCheck(device, eff, buf, shotId, ts, text) {
         }
       }
     }
-    // ② 处罚标准联动：按「兑现登记」里配的规则登记负数兑现 + 发短消息（规则/开关没配 = 空跑）
+    // ② 处罚标准联动：按「兑现登记」里配的规则登记一笔兑现扣款 + 发短消息（规则/开关没配 = 空跑）
     try {
       const applied = penaltyService.applyPenalty({
         deviceId: device.id, deviceName: device.name, keyword: kw, aiText: text, ts,

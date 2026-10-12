@@ -22,7 +22,7 @@
       <div class="mn-card vio"><b>{{ fmtDur(totals.piano_valid_sec) }}</b><span>练琴有效时长</span></div>
       <div class="mn-card gold"><b :class="{ neg: totals.money < 0 }">¥{{ (totals.money ?? 0).toFixed(2) }}</b><span>本月奖励（打字+视频+练琴）</span></div>
       <div class="mn-card"><b>¥{{ (totals.paid ?? 0).toFixed(2) }}</b><span>已兑现</span></div>
-      <div v-if="(totals.penalty ?? 0) > 0" class="mn-card"><b class="neg">-¥{{ (totals.penalty ?? 0).toFixed(2) }}</b><span>本月处罚扣款</span></div>
+      <div v-if="(totals.penalty ?? 0) > 0" class="mn-card"><b class="neg">¥{{ (totals.penalty ?? 0).toFixed(2) }}</b><span>本月处罚扣款</span></div>
       <div class="mn-card hot"><b>¥{{ (totals.pending ?? 0).toFixed(2) }}</b><span>待兑现</span></div>
     </div>
 
@@ -49,7 +49,7 @@
         <span class="adv">本月已赊账 ¥{{ totals.advanced.toFixed(2) }}（计入待兑现扣减）</span>
       </template>
       <template v-if="(totals.penalty ?? 0) > 0">
-        <span class="adv">本月电脑监控处罚扣款 -¥{{ totals.penalty.toFixed(2) }}（计入待兑现扣减，在「兑现登记 → 兑现记录」）</span>
+        <span class="adv">本月电脑监控处罚扣款 ¥{{ totals.penalty.toFixed(2) }}（计入待兑现扣减，在「兑现登记 → 兑现记录」）</span>
       </template>
     </div>
   </div>

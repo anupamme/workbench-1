@@ -1,8 +1,10 @@
-// 电脑监控处罚联动（v1.13.5）
+// 电脑监控处罚联动（v1.13.5；记账口径 v1.13.12 改为正数）
 // 电脑监控里「预警关键字」命中时（屏幕 AI 概括文本包含关键字），按「兑现登记 → 处罚标准」的规则
-// 自动在 typing_payouts 里登记一笔【负数】兑现（= 扣款），并给指定成员发一条短消息。
-//   · 负数兑现让「兑现记录」合计可为负——合计本来就是 0 时，扣完直接变欠账的负值。
-//   · 待兑现 = 应得合计 − 已兑现 − 处罚扣款 − 已赊账（见 typingRoutes 的 preview/summary）。
+// 自动在 typing_payouts 里登记一笔处罚扣款，并给指定成员发一条短消息。
+//   · **金额记正数**（与普通兑现在同一张流水里）：兑现流水本来就是「从应兑换金额里扣掉多少钱」，
+//     再记成负数等于把钱加回去——所以处罚必须是正数，这样「兑现记录」合计才会随处罚变大。
+//   · 处罚行靠备注抬头 NOTE_PREFIX 区分（见下），**不再用正负号当判据**。
+//   · 待兑现 = 应得合计 − 已兑现（不含处罚） − 处罚扣款 − 已赊账（见 typingRoutes 的 preview/summary）。
 // 配置存主库 settings.monitor_penalty_cfg（钱款管理，UI 在「学习 → 兑现登记」页的「处罚标准」卡）。
 // 规则字段：device_id = 哪台被监控电脑；amount = 每次扣减金额；deduct_user_id = 扣减哪个成员；
 //           push_user_ids = 短消息推给哪些成员。
@@ -12,6 +14,10 @@ const { db, getSetting, setSetting } = require('../db');
 const messageService = require('./messageService');
 
 const CFG_KEY = 'monitor_penalty_cfg';
+
+// 处罚备注的固定抬头——**处罚行与普通兑现行的唯一判据**（下面 applyPenalty 拼的备注必然以此开头）。
+// 改这里必须同步改：typingRoutes 的 paid/penalty 聚合、PayoutPanel 的「处罚」标记。
+const NOTE_PREFIX = '《预警违法电脑使用规定，扣减';
 
 function listDevices() {
   return db.prepare(
@@ -69,7 +75,7 @@ function saveConfig(patch) {
   return { ...getConfig(), devices: listDevices(), users: listUsers() };
 }
 
-// 预警命中时调用：按规则登记负数兑现 + 发短消息。返回实际执行的结果（供日志）。
+// 预警命中时调用：按规则登记一笔处罚扣款 + 发短消息。返回实际执行的结果（供日志）。
 function applyPenalty({ deviceId, deviceName, keyword, aiText, ts }) {
   const cfg = getConfig();
   if (!cfg.enabled || !cfg.rules.length) return [];
@@ -83,17 +89,19 @@ function applyPenalty({ deviceId, deviceName, keyword, aiText, ts }) {
     const X = fmtMoney(r.amount);
     const ai = String(aiText || '').trim().slice(0, 300);
     // 备注原因：按需求拼接 —— 《预警违法电脑使用规定，扣减X元》 + 处罚标准说明 + AI 分析内容
+    // （抬头必须是 NOTE_PREFIX，它是处罚行与普通兑现行的唯一判据）
     const note = (
-      `《预警违法电脑使用规定，扣减${X}元》`
+      `${NOTE_PREFIX}${X}元》`
       + `根据处罚标准本次扣减${X}元，已经实时记入赚钱结算金额中。如有再犯随时增加处罚额度。`
       + ai
     ).slice(0, 500);
     const from = firstAdminId();
+    // 金额正数：流水里一行就是「从应兑换金额里扣掉多少」，处罚也照此记（v1.13.12 前的负数已由 db 迁移翻正）
     db.prepare('INSERT INTO typing_payouts(user_id, period, amount, note, created_by) VALUES(?,?,?,?,?)')
-      .run(r.deduct_user_id, month, -r.amount, note, from);
+      .run(r.deduct_user_id, month, r.amount, note, from);
     const subject = `电脑监控处罚：${name} 被扣减 ${X} 元`;
     const content = `【${deviceName || deviceId}】${ts || ''} 的屏幕截图命中预警关键词「${keyword}」。\n`
-      + `${note}\n（已实时记入 ${name} 的「兑现登记 → 兑现记录」，金额为负=欠账）`;
+      + `${note}\n（已实时记入 ${name} 的「兑现登记 → 兑现记录」，直接抵扣应兑换金额）`;
     for (const uid of r.push_user_ids) {
       try {
         messageService.send(db, { from_user: from, to_user: uid, subject, content, module: 'monitor' });
@@ -104,4 +112,4 @@ function applyPenalty({ deviceId, deviceName, keyword, aiText, ts }) {
   return done;
 }
 
-module.exports = { CFG_KEY, getConfig, saveConfig, applyPenalty, listDevices, listUsers };
+module.exports = { CFG_KEY, NOTE_PREFIX, getConfig, saveConfig, applyPenalty, listDevices, listUsers };

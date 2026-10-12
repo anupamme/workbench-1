@@ -1,10 +1,10 @@
-// 电脑监控 ↔ 兑现登记「处罚标准」联动（v1.13.5）——服务端全链路集成测试
+// 电脑监控 ↔ 兑现登记「处罚标准」联动（v1.13.5；记账口径 v1.13.12 改为正数）——服务端全链路集成测试
 //
 // 覆盖用户提的需求：
-//   ① 命中预警关键词 → 在【兑现登记】的已兑现流水里加一笔【负数】金额，备注 =《预警违法电脑使用规定，扣减X元》
+//   ① 命中预警关键词 → 在【兑现登记】的兑现流水里加一笔【处罚扣款】，备注 =《预警违法电脑使用规定，扣减X元》
 //      +「根据处罚标准本次扣减X元，已经实时记入赚钱结算金额中。如有再犯随时增加处罚额度。」+ AI 分析原文
 //   ② 「处罚标准」按【电脑名称】【扣哪个成员】【推给哪些成员（短消息）】逐台配置
-//   ③ 合计本来就是 0 → 扣完直接是欠账负值（负数不改写「已兑现」正数口径）
+//   ③ **金额记正数**（v1.13.12 起；原先记负数，等于把钱加回去）——处罚行靠备注抬头区分，行里带 kind='penalty'
 //   ④ 待兑现 = 应得 − 已兑现 − 处罚扣款 − 已赊账
 //   ⑤ 命中但「预警推送给」为空也要罚（不能因为没配预警推送就静默失效）
 //
@@ -153,7 +153,7 @@ try {
   p = await api('GET', '/api/typing/payouts/penalty', { token: T });
   ok(p.j.rules.length === 2 && p.j.rules[1].device_id === 'testdev02' && p.j.rules[1].amount === 3, 'PUT 后回读一致');
 
-  // ---------- ① 命中关键字 → 负数兑现 + 短消息 ----------
+  // ---------- ① 命中关键字 → 正数处罚扣款 + 短消息 ----------
   console.log('— 命中预警 → 自动扣款 + 短消息');
   const up1 = await uploadShot('testdev01', KEY);
   ok(up1.status === 200 && up1.j.ok, '上报截图（孩子电脑）');
@@ -169,18 +169,19 @@ try {
 
   const rows1 = await waitFor(async () => {
     const r = await api('GET', '/api/typing/payouts', { token: T });
-    const neg = (r.j || []).filter((x) => x.amount < 0);
-    return neg.length ? r.j : null;
+    const pen = (r.j || []).filter((x) => x.kind === 'penalty');
+    return pen.length ? r.j : null;
   });
-  ok(!!rows1, '兑现流水里出现负数记录');
-  const pen1 = (rows1 || []).filter((x) => x.amount < 0)[0];
+  ok(!!rows1, '兑现流水里出现处罚行（kind=penalty）');
+  const pen1 = (rows1 || []).filter((x) => x.kind === 'penalty')[0];
   const EXP1 = '《预警违法电脑使用规定，扣减5.5元》根据处罚标准本次扣减5.5元，已经实时记入赚钱结算金额中。如有再犯随时增加处罚额度。';
-  ok(!!pen1 && pen1.amount === -5.5, '金额 = -5.5（负数 = 扣款）');
+  ok(!!pen1 && pen1.amount === 5.5, '金额 = 5.5（正数：一行就是「从应兑换金额里扣掉 5.5」）');
   ok(!!pen1 && pen1.note.startsWith(EXP1), '备注前两段与需求原文逐字一致');
   ok(!!pen1 && pen1.note.includes('4399小游戏') && pen1.note === EXP1 + visionText.trim(), '备注第三段 = AI 分析原文，整条无多余字符');
   ok(!!pen1 && pen1.period === monthNow(), '记账月份 = 触发当月');
   ok(!!pen1 && pen1.created_by === ADMIN && pen1.created_by_name && pen1.user_id === ADMIN, '记录归属（扣 admin，登记人 admin）');
-  ok((rows1 || []).filter((x) => x.amount < 0).length === 1, '同样的规则只登记一笔（没有重复扣款）');
+  ok((rows1 || []).filter((x) => x.kind === 'penalty').length === 1, '同样的规则只登记一笔（没有重复扣款）');
+  ok((rows1 || []).filter((x) => x.kind === 'penalty').every((x) => x.amount > 0), '处罚行金额一律为正（不再有负数行）');
 
   // 短消息：推给 [小明, admin] 两个人，用 admin 的会话各看一次
   const msgKid = await api('GET', `/api/messages?user_id=${KID}`, { token: T });
@@ -193,8 +194,8 @@ try {
   // 「预警推送给」为空时不该有预警消息（本轮告警只走处罚联动）
   ok(!(msgKid.j.messages || []).some((m) => String(m.subject || '').includes('电脑监控预警')), '预警推送给为空 → 不发预警消息，但仍完成打标 + 扣款');
 
-  // ---------- ② 第二台电脑 / 第二个成员（欠账负值） ----------
-  console.log('— 第二台电脑串到另一个成员的账（0 起步 → 负值欠账）');
+  // ---------- ② 第二台电脑 / 第二个成员 ----------
+  console.log('— 第二台电脑串到另一个成员的账');
   const up2 = await uploadShot('testdev02', KEY);
   await waitFor(async () => {
     const r = await api('GET', '/api/monitor/shots?device_id=testdev02&page=1&page_size=5', { token: T });
@@ -206,11 +207,17 @@ try {
     const mine = (r.j || []).filter((x) => x.user_id === KID);
     return mine.length ? mine : null;
   });
-  ok(!!kids && kids[0].amount === -3, '小明那笔 = -3（按设备命中自己的规则）');
-  ok(sum(kids || []) === -3, '小明流水合计 = -3（本来 0 元 → 现在是欠账负值）');
-  ok(sum((rows1 || []).filter((x) => x.user_id === ADMIN)) === -5.5, 'admin 流水合计 = -5.5');
+  ok(!!kids && kids[0].amount === 3, '小明那笔 = +3（按设备命中自己的规则）');
+  ok(sum(kids || []) === 3, '小明流水合计 = 3（这一列是「被扣掉多少」，所以随处罚变大）');
+  ok(sum((rows1 || []).filter((x) => x.user_id === ADMIN)) === 5.5, 'admin 流水合计 = 5.5');
   const kidMsgs = await api('GET', `/api/messages?user_id=${ADMIN}`, { token: T });
   ok((kidMsgs.j.messages || []).some((m) => String(m.subject || '').includes('扣减 3 元')), '第二笔的短消息（扣减 3 元）也发了');
+
+  // 手工登记的普通兑现行必须落成 kind='payout'（前端就靠这个字段区分「处罚」标记，别再靠金额正负）
+  await api('POST', '/api/typing/payouts', { token: T, body: { user_id: KID, period: monthNow(), amount: 4, note: '微信转账' } });
+  const mixed = await api('GET', '/api/typing/payouts', { token: T });
+  const kid4 = (mixed.j || []).find((x) => x.user_id === KID && x.amount === 4);
+  ok(!!kid4 && kid4.kind === 'payout' && !kid4.note.startsWith('《预警'), '普通兑现行 kind=payout，处罚行 kind=penalty（同一张流水并存）');
 
   // ---------- ③ 待兑现口径：应得 − 已兑现 − 处罚 − 已赊账 ----------
   console.log('— 待兑现口径');
@@ -219,7 +226,7 @@ try {
   await api('POST', '/api/typing/progress', { token: T, body: { correct: 20, wrong: 0, seconds: 60 } }); // admin 赚 20 元
   const pv = await api('GET', `/api/typing/payouts/preview?user_id=${ADMIN}&month=${monthNow()}`, { token: T });
   ok(pv.j.earned === 20, 'admin 本月应得 20 元');
-  ok(pv.j.paid === 0 && pv.j.penalty === 5.5, '已兑现（正数）= 0；处罚扣款单列 = 5.5（负数没被算进「已兑现」）');
+  ok(pv.j.paid === 0 && pv.j.penalty === 5.5, '已兑现 = 0；处罚扣款单列 = 5.5（处罚行没被算进「已兑现」）');
   ok(pv.j.pending === 14.5, '待兑现 = 20 − 0 − 5.5 − 0 = 14.5');
   const pv2 = await api('GET', `/api/typing/payouts/preview?user_id=${KID}&month=${monthNow()}`, { token: T });
   ok(pv2.j.earned === 0 && pv2.j.penalty === 3 && pv2.j.pending === 0, '小明：应得 0、处罚 3、待兑现不为负数（=0）');
@@ -239,7 +246,7 @@ try {
   });
   await sleep(500); // 给同步登记留出余量
   let rows = await api('GET', '/api/typing/payouts', { token: T });
-  ok(rows.j.filter((x) => x.amount < 0).length === 2, '关闭后命中关键字不再产生扣款（仍是 2 笔）');
+  ok(rows.j.filter((x) => x.kind === 'penalty').length === 2, '关闭后命中关键字不再产生扣款（仍是 2 笔）');
 
   // 不带 enabled 的 PUT 不把开关偷偷打开
   const p3 = await api('PUT', '/api/typing/payouts/penalty', { token: T, body: { rules: p.j.rules } });
@@ -257,7 +264,7 @@ try {
   });
   await sleep(500);
   rows = await api('GET', '/api/typing/payouts', { token: T });
-  ok(rows.j.filter((x) => x.amount < 0).length === 2, '文本不含关键字 → 不扣款（仍 2 笔）');
+  ok(rows.j.filter((x) => x.kind === 'penalty').length === 2, '文本不含关键字 → 不扣款（仍 2 笔）');
   ok(!!shot4 && shot4.alert_hit === 0, '未命中的截图 alert_hit 保持 0（照常按保留期清理）');
 
   // 关键字清空 → 连打标都不该发生
@@ -270,7 +277,7 @@ try {
     return it && it.ai_text ? it : null;
   });
   rows = await api('GET', '/api/typing/payouts', { token: T });
-  ok(rows.j.filter((x) => x.amount < 0).length === 2, '关键字清空 → 不扣款');
+  ok(rows.j.filter((x) => x.kind === 'penalty').length === 2, '关键字清空 → 不扣款');
   ok(!!shot5 && shot5.alert_hit === 0, '关键字清空 → 不打 alert_hit');
 
   // ---------- ⑥ 权限：处罚标准归「兑现登记」受限 tab ----------

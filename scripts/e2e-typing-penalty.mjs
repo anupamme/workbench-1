@@ -1,8 +1,8 @@
-// e2e：学习 → 兑现登记「处罚标准」↔ 电脑监控预警联动（v1.13.5）
+// e2e：学习 → 兑现登记「处罚标准」↔ 电脑监控预警联动（v1.13.5；记账口径 v1.13.12 改为正数）
 //
 // 覆盖用户提的需求：
 //   ① 「兑现登记」页「奖励标准」下面新增「处罚标准」卡 —— 配【哪台电脑】【每次扣多少】【扣哪个成员】【推给哪些成员】
-//   ② 电脑监控命中预警关键字 → 兑现记录里自动多一笔负数（-¥X + 「处罚」标记），合计变负 = 欠账
+//   ② 电脑监控命中预警关键字 → 兑现记录里自动多一笔 ¥X（行尾「处罚」标记），合计随之变大（流水一行 = 扣掉多少钱）
 //   ③ 备注 =《预警违法电脑使用规定，扣减X元》+ 处罚标准说明 + AI 分析原文
 //   ④ 赚钱日历（money tab）显示「本月处罚扣款」并计入待兑现扣减
 //   ⑤ 规则由 UI 配置并落库（PUT 往返），普通成员进不了这张卡
@@ -124,7 +124,7 @@ try {
   ok((await penCard.locator('h3').innerText()).includes('处罚标准'), '「处罚标准」卡片渲染在兑现登记页');
   ok(await penCard.locator('input[type=checkbox]').isChecked(), '「启用处罚标准」默认勾选');
   ok((await penCard.innerText()).includes('《预警违法电脑使用规定，扣减X元》'), '卡片里写明备注格式');
-  ok((await penCard.innerText()).includes('欠账的负值'), '卡片里写明「合计为 0 时扣完变欠账负值」');
+  ok((await penCard.innerText()).includes('金额记正数'), '卡片里写明「处罚金额记正数」（v1.13.12 口径）');
   ok((await penCard.innerText()).includes('还没有规则'), '未配置时给「还没有规则」提示');
 
   // 添加规则 → 选电脑 / 金额 / 扣减成员 / 推送成员
@@ -165,15 +165,15 @@ try {
   ok(Number(await rule2.locator('input[type=number]').first().inputValue()) === 2.5, '刷新后金额回显');
   ok((await rule2.locator('.up-chip').first().innerText()).includes('小明'), '刷新后推送成员回显');
 
-  // ---------- 命中关键字 → 兑现记录出现负数 ----------
-  console.log('— 命中预警 → 兑现记录负数 + 合计欠账');
+  // ---------- 命中关键字 → 兑现记录出现处罚行 ----------
+  console.log('— 命中预警 → 兑现记录正数处罚行 + 合计变大');
   const up = await uploadShot('devmain01', KEY);
   ok(up.status === 200 && up.j.ok, '上报一张截图');
   const pen = await waitFor(async () => {
     const r = await api('GET', '/api/typing/payouts', { token: T });
-    return (r.j || []).find((x) => x.amount < 0) || null;
+    return (r.j || []).find((x) => x.kind === 'penalty') || null;
   });
-  ok(!!pen && pen.amount === -2.5, '兑现流水出现 -2.5');
+  ok(!!pen && pen.amount === 2.5, '兑现流水出现 +2.5（正数 = 从应兑换金额里扣掉 2.5）');
   ok(!!pen && pen.note.includes('《预警违法电脑使用规定，扣减2.5元》') && pen.note.includes('4399'), '备注 = 规定文案 + AI 分析原文');
 
   await p.reload();
@@ -181,9 +181,9 @@ try {
   // 注意：按整卡文本过滤会命中「处罚标准」卡（说明里就写着「兑现记录」），必须按 h3 定位
   const recCard = p.locator('.po-card').filter({ has: p.locator('h3', { hasText: '兑现记录' }) }).first();
   const rowTxt = await recCard.locator('tbody tr').first().innerText();
-  ok(rowTxt.includes('-¥2.50') && rowTxt.includes('处罚'), '兑现记录首行显示 -¥2.50 + 「处罚」标记');
+  ok(rowTxt.includes('¥2.50') && !rowTxt.includes('-¥2.50') && rowTxt.includes('处罚'), '兑现记录首行显示 ¥2.50 + 「处罚」标记（不再有负号）');
   ok((await recCard.locator('.badge.wait').count()) === 1, '处罚行带 badge（区别于普通兑现）');
-  ok((await recCard.innerText()).includes('¥-2.50（欠账）'), '兑现记录合计显示 ¥-2.50（欠账）');
+  ok((await recCard.innerText()).includes('合计 ¥2.50'), '兑现记录合计 = ¥2.50（随处罚变大，就是累计扣减额）');
   const noteTitle = await recCard.locator('tbody tr').first().locator('td.note').getAttribute('title');
   ok(String(noteTitle).startsWith('《预警违法电脑使用规定，扣减2.5元》'), '备注全文挂在 title（悬停可看完整原因）');
   // 预览行按「成员」算：默认停在登录者自己（admin）身上——处罚扣的是小明，必须先把成员切过去
@@ -193,7 +193,7 @@ try {
   // 切换后预览是异步重算的（watch → loadPreview），等它算出含处罚的金额再断言
   await p.waitForFunction(() => document.querySelector('.po-preview')?.innerText.includes('处罚扣款'), null, { timeout: 10000 }).catch(() => {});
   const pvTxt = await p.locator('.po-preview').innerText();
-  ok(pvTxt.includes('处罚扣款') && pvTxt.includes('-¥2.5'), '登记表单上方的预览行显示「处罚扣款 -¥2.5」（分子算）', pvTxt.replace(/\s+/g, ' ').slice(0, 200));
+  ok(pvTxt.includes('处罚扣款') && pvTxt.includes('¥2.5') && !pvTxt.includes('-¥2.5'), '登记表单上方的预览行显示「处罚扣款 ¥2.5」（分项单列、不带负号）', pvTxt.replace(/\s+/g, ' ').slice(0, 200));
   ok(pvTxt.includes('待兑现') && /待兑现\s*¥0\.00/.test(pvTxt.replace(/\s+/g, ' ')), '小明待兑现 0（负数不把待兑现压成负值）');
 
   // ---------- 赚钱日历 ----------
@@ -209,7 +209,7 @@ try {
   await p.waitForFunction(() => document.querySelector('.mn-cards')?.innerText.includes('本月处罚扣款'), null, { timeout: 10000 }).catch(() => {});
   const cards = await p.locator('.mn-cards').innerText();
   ok(cards.includes('本月处罚扣款'), '日历出现「本月处罚扣款」卡');
-  ok(cards.includes('-¥2.50'), '处罚扣款金额 -¥2.50');
+  ok(cards.includes('¥2.50') && !cards.includes('-¥2.50'), '处罚扣款金额 ¥2.50（不带负号）');
   ok(await p.waitForFunction(() => /本月电脑监控处罚扣款/.test(document.querySelector('.mn-rate')?.innerText || ''), null, { timeout: 10000 }).then(() => true).catch(() => false), '费率行注明处罚扣款去向');
   // 「待兑现」那张卡必须正好 ¥0.00（欠账不把待兑现压成负值）
   const pendCard = p.locator('.mn-card').filter({ has: p.locator('span', { hasText: '待兑现' }) }).first();

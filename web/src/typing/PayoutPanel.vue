@@ -28,7 +28,7 @@
         <br>
         应得合计 <b>¥{{ num(preview.earned) }}</b> · 已兑现 <b>¥{{ num(preview.paid) }}</b>
         <template v-if="preview.advanced > 0"> · 已赊账 <b class="hot">¥{{ num(preview.advanced) }}</b></template>
-        <template v-if="preview.penalty > 0"> · 处罚扣款 <b class="hot">-¥{{ num(preview.penalty) }}</b></template>
+        <template v-if="preview.penalty > 0"> · 处罚扣款 <b class="hot">¥{{ num(preview.penalty) }}</b></template>
         · 待兑现 <b class="hot">¥{{ num(preview.pending) }}</b>
         <a v-if="preview.pending > 0" class="mini-link" @click="form.amount = preview.pending">填入待兑现金额</a>
       </div>
@@ -57,14 +57,15 @@
       <div v-if="rateMsg" class="po-msg" :class="rateMsgType">{{ rateMsg }}</div>
     </div>
 
-    <!-- 处罚标准（v1.13.5）：电脑监控命中预警关键字 → 自动在兑现流水登记负数扣款 + 发短消息 -->
+    <!-- 处罚标准（v1.13.5；记账口径 v1.13.12 改为正数）：电脑监控命中预警关键字 → 自动登记一笔兑现扣款 + 发短消息 -->
     <div class="po-card">
       <h3>处罚标准 <span class="muted">（电脑监控命中「预警关键字」→ 自动扣款并推短消息）</span></h3>
       <div class="muted" style="font-size:12px; margin-bottom:10px; line-height:1.7">
         「效率工具 → 电脑监控」的屏幕 AI 分析文字命中「预警关键字」时，按下面规则自动在「兑现记录」里登记一笔
-        <b>负数兑现（处罚扣款）</b>，并给指定成员发一条「短消息」。<br>
+        <b>处罚扣款</b>（金额记正数，与普通兑现在同一张流水里，行尾带「处罚」标记），并给指定成员发一条「短消息」。<br>
         备注写明《预警违法电脑使用规定，扣减X元》，后接处罚标准说明与 AI 分析原文。<br>
-        兑现记录合计本来就为 0 时，扣完直接变成<b>欠账的负值</b>；「待兑现」= 应得合计 − 已兑现 − 处罚扣款 − 已赊账。
+        兑现流水本来就是「从应兑换金额里扣掉多少钱」，所以处罚也记正数、合计随处罚变大（记负数反而等于把钱加回去）；
+        「待兑现」= 应得合计 − 已兑现 − 处罚扣款 − 已赊账。
       </div>
       <label style="display:inline-flex; align-items:center; gap:8px; font-size:13.5px; margin-bottom:10px; cursor:pointer">
         <input v-model="penalty.enabled" type="checkbox" style="width:auto">
@@ -92,7 +93,7 @@
             <option :value="0">请选择扣谁的账</option>
             <option v-for="u in penalty.users" :key="u.id" :value="u.id">{{ uname(u) }}</option>
           </select>
-          <span class="cur">（在「兑现记录」里记为 -X 元）</span>
+          <span class="cur">（在「兑现记录」里记为一笔 X 元处罚扣款）</span>
         </div>
         <div class="rate-line">
           推送成员：
@@ -195,9 +196,9 @@
 
     <div class="po-card">
       <h3>兑现记录
-        <span class="muted">（负数行 = 电脑监控处罚扣款；合计为负 = 欠账）</span>
+        <span class="muted">（每行的金额都是「从应兑换金额里扣掉多少」；带「处罚」标记的行 = 电脑监控处罚扣款）</span>
         <span class="grow"></span>
-        <span class="muted">合计 <b :class="listNet < 0 ? 'neg-money' : 'ok-money'">¥{{ listNet.toFixed(2) }}</b>{{ listNet < 0 ? '（欠账）' : '' }}</span>
+        <span class="muted">合计 <b class="ok-money">¥{{ listNet.toFixed(2) }}</b></span>
       </h3>
       <table class="po-table">
         <thead>
@@ -208,9 +209,9 @@
             <td>{{ p.created_at }}</td>
             <td>{{ p.user_name }}</td>
             <td>{{ p.period }}</td>
-            <td :class="p.amount < 0 ? 'neg-money' : 'ok'">
-              {{ p.amount < 0 ? '-¥' + Math.abs(Number(p.amount)).toFixed(2) : '¥' + Number(p.amount).toFixed(2) }}
-              <span v-if="p.amount < 0" class="badge wait">处罚</span>
+            <td :class="p.kind === 'penalty' ? 'neg-money' : 'ok'">
+              ¥{{ Number(p.amount).toFixed(2) }}
+              <span v-if="p.kind === 'penalty'" class="badge wait">处罚</span>
             </td>
             <td class="note" :title="p.note || ''">{{ p.note || '—' }}</td>
             <td>{{ p.created_by_name }}</td>
@@ -331,7 +332,7 @@ async function savePenalty() {
   savingPenalty.value = false;
   setTimeout(() => { penaltyMsg.value = ''; }, 4000);
 }
-// 兑现记录合计（含处罚负数行），为负 = 欠账
+// 兑现记录合计 = 各扣减项（普通兑现 + 处罚）之和；v1.13.12 起全为正数，故合计只会变大
 const listNet = computed(() => list.value.reduce((s, p) => s + (Number(p.amount) || 0), 0));
 
 async function loadUsers() {

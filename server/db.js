@@ -2677,6 +2677,23 @@ function migrateTestsIntoPrivate() {
 }
 migrateTestsIntoPrivate();
 
+// 一次性订正（v1.13.12）：电脑监控处罚原先在 typing_payouts 里记成【负数】，
+// 但兑现流水本来就是「从应兑换金额里扣掉多少」——负数等于把钱加回去，兑现记录合计被它越扣越少。
+// 存量负数行就地翻正。**判据 = 「amount < 0」，不加别的条件**：这张表唯一的负数来源就是
+// v1.13.5~v1.13.11 的处罚联动（POST /typing/payouts 校验 amount>0），所以负数行必然是处罚行；
+// 反过来说，若按备注抬头去筛，万一那行的备注被改过就会**静默漏掉**，用户的订正需求就落空了。
+// 翻正前先把 id/金额/备注抬头打出来，部署日志里能看到到底动了哪几行（生产只有一行 -1）。
+// ⚠️ 只能跑主库：typing_payouts 是主库专属表，租户库里根本没有（别挪进 applyColumnMigrations）。
+(function migrateTypingPenaltyPositive() {
+  if (getSetting(db, 'typing_penalty_positive_v11312', false)) return;
+  setSetting(db, 'typing_penalty_positive_v11312', true);
+  const rows = db.prepare('SELECT id, user_id, period, amount, note FROM typing_payouts WHERE amount < 0 ORDER BY id').all();
+  if (!rows.length) return;
+  db.prepare('UPDATE typing_payouts SET amount = -amount WHERE amount < 0').run();
+  console.log(`[db] 迁移：typing_payouts 负数行翻正 ${rows.length} 行 —— ` + rows.map((r) =>
+    `#${r.id} 用户${r.user_id} ${r.period} ${r.amount}→${-r.amount}（${String(r.note || '').slice(0, 24)}…）`).join('； '));
+})();
+
 // 家庭共享底账初始化（一次性，守卫 family_share_v1；函数定义在模块层，见文件尾）
 migrateFamilyShare();
 

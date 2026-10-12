@@ -140,13 +140,15 @@ router.get('/typing/summary', (req, res) => {
   const tc = rows.reduce((a, r) => a + r.correct, 0);
   const tw = rows.reduce((a, r) => a + r.wrong, 0);
   const ts = rows.reduce((a, r) => a + r.seconds, 0);
-  // 已兑现只算正数（登记的兑现）；负数行 = 电脑监控处罚扣款，单独统计（v1.13.5）
+  // 已兑现 = 普通兑现行之和；处罚扣款 = 备注抬头命中 NOTE_PREFIX 的行（v1.13.12 起两者都记正数）。
+  // 之前处罚靠正负号区分：负数在「兑现记录」合计里等于把钱加回去，故改为正数记账、用备注抬头区分。
+  // 处罚取 ABS()：处罚永远是「扣减」，万一还有旧版留下的负数处罚行（回滚/未跑到迁移），也照样扣。
   const paid = db.prepare(
-    'SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
-  ).get(uid, month).s;
+    "SELECT COALESCE(SUM(CASE WHEN instr(COALESCE(note,''), ?) <> 1 THEN amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?"
+  ).get(penaltyService.NOTE_PREFIX, uid, month).s;
   const penalty = db.prepare(
-    'SELECT COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
-  ).get(uid, month).s;
+    "SELECT COALESCE(SUM(CASE WHEN instr(COALESCE(note,''), ?) = 1 THEN ABS(amount) ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?"
+  ).get(penaltyService.NOTE_PREFIX, uid, month).s;
   // 视频学时（按流水落账日）与练琴有效时长（按录音开始日，仅已确认）按天聚合
   const vDay = videoEffByDay(uid, month);
   const pDay = pianoValidByDay(uid, month);
@@ -232,13 +234,13 @@ router.get('/typing/payouts/preview', (req, res) => {
   const agg = db.prepare(
     "SELECT COALESCE(SUM(correct),0) c, COALESCE(SUM(wrong),0) w FROM typing_days WHERE user_id=? AND day LIKE ?"
   ).get(uid, month + '-%');
-  // 已兑现 = 正数兑现之和；负数行 = 电脑监控处罚扣款（v1.13.5），单独返回给前端展示
+  // 已兑现 = 普通兑现行之和；备注抬头命中 NOTE_PREFIX 的行 = 电脑监控处罚扣款（v1.13.12 起两者都记正数，处罚取 ABS）
   const paid = db.prepare(
-    'SELECT COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
-  ).get(uid, month).s;
+    "SELECT COALESCE(SUM(CASE WHEN instr(COALESCE(note,''), ?) <> 1 THEN amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?"
+  ).get(penaltyService.NOTE_PREFIX, uid, month).s;
   const penalty = db.prepare(
-    'SELECT COALESCE(SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?'
-  ).get(uid, month).s;
+    "SELECT COALESCE(SUM(CASE WHEN instr(COALESCE(note,''), ?) = 1 THEN ABS(amount) ELSE 0 END),0) s FROM typing_payouts WHERE user_id=? AND period=?"
+  ).get(penaltyService.NOTE_PREFIX, uid, month).s;
   const videoSec = db.prepare(
     "SELECT COALESCE(SUM(delta_sec),0) v FROM vstudy_ledger WHERE user_id=? AND strftime('%Y-%m', created_at)=?"
   ).get(uid, month).v;
@@ -289,6 +291,8 @@ router.get('/typing/payouts', (req, res) => {
   res.json(rows.map((r) => ({
     id: r.id, user_id: r.user_id, user_name: r.u_dn || r.u_nn || r.u_un,
     period: r.period, amount: r.amount, note: r.note,
+    // 行类型一并下发，前端不再自己认备注抬头（唯一判据在 monitorPenaltyService.NOTE_PREFIX）
+    kind: String(r.note || '').startsWith(penaltyService.NOTE_PREFIX) ? 'penalty' : 'payout',
     created_by: r.created_by,
     created_by_name: r.c_dn || r.c_nn || r.c_un || `#${r.created_by}`,
     created_at: r.created_at,
