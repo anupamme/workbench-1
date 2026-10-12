@@ -1,15 +1,20 @@
-// e2e：学习 → 地理 tab（v1.13.14）
+// e2e：学习 → 地理 tab（v1.13.15 起 = 自制地球仪页）
 //
 // 用户需求：「把这个地球仪功能页的功能，加入到【学习】——增加一个 tab 页【地理】，
 // 把参考页面的地球仪全部功能完整代码加入到这个 tab 页。像原生在工作台一样。」
+// 随后追加：「你照着地球仪的模式，完整复刻一套新的不用这个版权的效果给我看。」
 //
 // 实现事实（决定了本测试怎么断言）：
-//   · 该地球仪页（地球仪 · 3D模拟实验室 V0916-1，© JZS LAB）主脚本对**自身**做完整性自检
-//     （全文哈希 + 版权 meta / <i> / style 文本 + 必需 DOM id + 8K 纹理 data-URI 首尾与哈希），
-//     任何改动都会让它自毁成「页面完整性校验失败，已停止运行」——所以只能**原样托管**
-//     （web/public/geo/earth-globe.html → dist 根 geo/earth-globe.html），学习页用全高 iframe 嵌入。
-//   · 因此本测试的硬断言是：①静态文件与本地 dist **逐字节相同**（没被任何环节改写）；
-//     ②iframe 里自检没失败；③功能真在跑（3D 标签层算出地名、点地球出经纬度、2D 能切）。
+//   · 页面是**本站自研**的 web/public/geo/globe.html（单文件，源码在本仓库）——
+//     无第三方版权、无完整性自检，所以「线上字节 == 工作区源文件」这条既证明发布链没改写，
+//     也顺带证明线上跑的确实是我们的文件（反向断言：页面里不许出现第三方版权标识
+//     「尖子声原创」/ earth-globe，那份第三方页已移出构建树）。
+//   · 学习页用全高 iframe 嵌入（geo/globe.html 相对路径，fnOS 网关前缀自动跟随）。
+//   · 硬断言：①静态文件逐字节相同；②iframe 里页面启动成功（#loading.done、无 #fatal）；
+//     ③功能真在跑（3D 标签层算出地名、点地球出经纬度、拖动真的转动地球、2D 能切且底图解码）。
+//
+// 地球仪本体的深度硬判据（镜像/自转方向/极地视角/像素差）在 Logs/probe-globe-fixed.mjs，
+// 那份是开发期的验收脚本；这里守的是「接进工作台之后」这条链。
 //
 // 隔离 DATA_DIR 必须在 import 任何 server 模块之前设置（db.js sweep 会导入 data/ 根下的杂库）；
 // 这里用 spawn 起独立进程，env 直接透传即可。
@@ -23,6 +28,7 @@ const PORT = 3451;
 const B = `http://127.0.0.1:${PORT}`;
 const DATA = mkdtempSync(path.join(tmpdir(), 'wb-geo-'));
 const ROOT = path.join(import.meta.dirname, '..');
+const PAGE = 'geo/globe.html';
 
 let passed = 0, failed = 0;
 const ok = (cond, name, extra) => {
@@ -65,14 +71,22 @@ try {
   await waitReady();
 
   // ---------- ① 静态托管：页面原样在，且逐字节没被改写 ----------
-  console.log('— ① 静态托管（地球仪页随前端一起发布，字节级原样）');
-  const r = await fetch(`${B}/geo/earth-globe.html`);
+  console.log('— ① 静态托管（自制地球仪页随前端一起发布，字节级原样）');
+  const localHtml = readFileSync(path.join(ROOT, 'web/public', PAGE));
+  const verInFile = (localHtml.toString('utf8').match(/自制版 v[\d.]+/) || [''])[0];
+  ok(!!verInFile, '工作区源文件带自制版版本号（部署后用它能一眼认出线上是这一版）', verInFile || '没找到');
+
+  const r = await fetch(`${B}/${PAGE}`);
   const buf = Buffer.from(await r.arrayBuffer());
-  ok(r.status === 200, 'GET /geo/earth-globe.html 200（不需要登录——该页是独立第三方页，无 token 概念）', String(r.status));
-  const localHtml = readFileSync(path.join(ROOT, 'web/public/geo/earth-globe.html'));
-  ok(buf.length === localHtml.length && sha(buf) === sha(localHtml), '线上字节 == 工作区源文件（原样托管，没被任何环节改写）',
+  ok(r.status === 200, `GET /${PAGE} 200（不需要登录——该页是独立页面，无 token 概念）`, String(r.status));
+  ok(buf.length === localHtml.length && sha(buf) === sha(localHtml), '线上字节 == 工作区源文件（发布链没改写它）',
     `${buf.length} B / ${sha(buf).slice(0, 12)}…`);
-  ok(buf.toString('utf8', 0, 200).includes('<!DOCTYPE html'), '返回的是 HTML 页面（不是 SPA 兜底 index.html）');
+  const served = buf.toString('utf8');
+  ok(served.includes('<!DOCTYPE html'), '返回的是 HTML 页面（不是 SPA 兜底 index.html）');
+  ok(served.includes(verInFile), '线上就是这一版（版本号对得上）', verInFile);
+  // 反向断言：线上跑的必须是我们自制的页，不能是那份第三方版权页
+  ok(!served.includes('尖子声原创') && !served.includes('earth-globe'),
+    '线上没有第三方版权标识（自制版已替换掉 earth-globe.html）');
 
   const lg = await api('POST', '/api/auth/login', { body: { username: 'admin', password: 'test123456' } });
   const T = lg.j.b?.token || lg.j.token;
@@ -102,16 +116,25 @@ try {
   const frameEl = p.locator('iframe.geo-frame');
   await frameEl.waitFor({ timeout: 10000 });
   const src = await frameEl.getAttribute('src');
-  ok(/geo\/earth-globe\.html$/.test(src || ''), 'iframe 指向 geo/earth-globe.html（相对路径，fnOS 网关前缀自动跟随）', src || '');
+  ok(new RegExp(`${PAGE.replace('.', '\\.')}$`).test(src || ''), `iframe 指向 ${PAGE}（相对路径，fnOS 网关前缀自动跟随）`, src || '');
 
-  const fr = p.frames().find((f) => f.url().includes('earth-globe.html'));
+  const fr = p.frames().find((f) => f.url().includes('globe.html'));
   ok(!!fr, 'iframe 已加载到地球仪页');
-  await fr.waitForSelector('#globe-canvas', { timeout: 25000 }).catch(() => {});
-  await sleep(3000);   // 渲染器加密载荷解码 + 首帧
+  await fr.waitForSelector('#loading.done', { timeout: 60000 }).catch(() => {});
+  await sleep(800);
 
-  const bodyTxt = await fr.locator('body').innerText().catch(() => '');
-  ok(!bodyTxt.includes('完整性校验失败'), '地球仪页自检通过（没有出现「页面完整性校验失败」）',
-    bodyTxt.includes('完整性校验失败') ? '被自检拦下 = 文件被改写过' : '通过');
+  // 页面自报家门：品牌栏那行版本号 == 工作区文件里的那一行（证明进的是我们这份文件）
+  const brandVer = await fr.evaluate(() => {
+    const el = document.querySelector('.brand .ver');
+    return el ? el.textContent.trim() : '';
+  }).catch(() => '');
+  ok(brandVer === verInFile, 'iframe 里的是自制版（品牌栏版本号与源文件一致）', brandVer);
+
+  const fatal = await fr.evaluate(() => {
+    const f = document.getElementById('fatal');
+    return f && getComputedStyle(f).display !== 'none' ? f.innerText.slice(0, 100) : '';
+  }).catch(() => '');
+  ok(!fatal, '没有「地球仪无法启动」遮罩（WebGL 初始化成功）', fatal);
   ok(await fr.locator('#globe-canvas').count() === 1, '3D canvas 存在');
   ok(await fr.locator('#map-2d-container').count() === 1, '2D 容器存在（两套模式都在页面里）');
   ok(await fr.locator('#btn-2d').count() === 1 && await fr.locator('#btn-3d').count() === 1, '3D / 2D 切换按钮都在');
@@ -119,7 +142,8 @@ try {
   // 渲染器真在跑：3D 标签层被算出地名（WebGL 帧缓冲读不到，用「算出来的东西」作证据）
   const live = await fr.evaluate(() => {
     const layer = document.getElementById('labels-3d-layer');
-    const labels = layer ? [...layer.children].map((e) => (e.textContent || '').trim()).filter(Boolean) : [];
+    const labels = layer ? [...layer.children].map((e) => ({ t: (e.textContent || '').trim(), d: e.style.display }))
+      .filter((o) => o.t && o.d !== 'none').map((o) => o.t) : [];
     const c = document.getElementById('globe-canvas');
     return { labels: labels.slice(0, 6), n: labels.length, canvas: c ? [c.width, c.height] : null };
   }).catch((e) => ({ err: String(e && e.message).slice(0, 80) }));
@@ -127,39 +151,49 @@ try {
   ok(!!live.canvas && live.canvas[0] > 200, '3D canvas 有尺寸', JSON.stringify(live.canvas));
 
   // 点一下地球 → 坐标面板给出经纬度（这个页面最主要的功能）
+  const box = await frameEl.boundingBox().catch(() => null);
+  const readCenter = () => fr.evaluate(() => ((document.getElementById('coordinate-result') || {}).innerText || '')
+    .replace(/\s+/g, ' ').trim());
   {
-    const box = await frameEl.boundingBox().catch(() => null);
     if (box) {
       await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
       await sleep(900);
     }
-    const res = await fr.evaluate(() => (document.getElementById('coordinate-result') || {}).textContent || '');
-    ok(/[0-9]/.test(res) && !res.includes('请点击地图'), '点地球后坐标面板给出经纬度',
-      String(res).replace(/\s+/g, ' ').slice(0, 80));
+    const res = await readCenter();
+    ok(/[0-9]/.test(res) && !res.includes('请点击'), '点地球后坐标面板给出经纬度', String(res).slice(0, 80));
   }
 
-  // 2D 平面图（8K 底图真的解码）
+  // 拖动 → 地球真的跟着转（不是把底图钉在屏幕上——这是复刻过程中修掉的那个 bug）
+  {
+    const before = await readCenter();
+    await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await p.mouse.down();
+    await p.mouse.move(box.x + box.width / 2 - 200, box.y + box.height / 2, { steps: 12 });
+    await p.mouse.up();
+    await sleep(700);
+    await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+    await sleep(400);
+    const after = await readCenter();
+    ok(after !== before && /[0-9]/.test(after), '拖动后中心经纬度变了（地球真在转）', `${before} → ${after}`);
+  }
+
+  // 2D 平面图（底图真的解码）
   await fr.locator('#btn-2d').click({ force: true }).catch(() => {});
   await sleep(1200);
   const cls = await fr.evaluate(() => document.body.className);
   ok(cls.includes('mode-2d'), '点「2D 平面图模式」后页面进入 mode-2d', cls);
   ok(await fr.evaluate(() => {
-    const im = document.getElementById('earth-texture-src');
+    const im = document.getElementById('earth-texture');
     return !!(im && im.complete && im.naturalWidth > 1000);
-  }), '2D 底图（8K 纹理）解码成功');
+  }), '2D 底图（5400×2700）解码成功');
+  ok(await fr.locator('#map2d').isVisible(), '2D 平面地图可见');
   await fr.locator('#btn-3d').click({ force: true }).catch(() => {});
   await sleep(600);
+  ok(await fr.locator('#globe-container').isVisible(), '切回 3D 正常');
 
   // 全屏能力（iframe 必须带 allow="fullscreen"，否则页内全屏按钮点了没反应）
   const allow = await frameEl.getAttribute('allow');
   ok((allow || '').includes('fullscreen'), 'iframe 带 allow="fullscreen"（页内全屏按钮可用）', allow || '');
-
-  // 版权标记仍在 = 页面还是原样的
-  const mark = await fr.evaluate(() => {
-    const w = document.getElementById('_0x7e4c9a_w');
-    return w ? (w.getAttribute('data-copyright') || '').slice(0, 8) : '';
-  });
-  ok(mark.startsWith('尖子声原创'), '页面自带版权标记仍在（没有二次加工）', mark);
 
   // 切走再切回：组件不残留、能再次加载（tab 反复切换是日常动作）
   await p.locator('.tabs button', { hasText: '心愿卡' }).first().click();
@@ -167,8 +201,8 @@ try {
   ok((await p.locator('iframe.geo-frame').count()) === 0, '切到别的 tab 后地球仪 iframe 被卸载（不留后台 WebGL 上下文）');
   await p.locator('.tabs button', { hasText: '地理' }).first().click();
   await p.waitForSelector('iframe.geo-frame', { timeout: 10000 });
-  const fr2 = p.frames().find((f) => f.url().includes('earth-globe.html'));
-  await fr2.waitForSelector('#globe-canvas', { timeout: 25000 }).catch(() => {});
+  const fr2 = p.frames().find((f) => f.url().includes('globe.html'));
+  await fr2.waitForSelector('#loading.done', { timeout: 60000 }).catch(() => {});
   ok(!!fr2 && (await fr2.locator('#globe-canvas').count()) === 1, '切回「地理」能重新加载（第二次也正常）');
   ok((await p.url()).includes('tab=geo'), '切 tab 同步地址栏 ?tab=geo', p.url());
 

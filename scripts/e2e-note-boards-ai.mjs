@@ -175,7 +175,9 @@ try {
   s.ck('删第二个白板', r.status === 200, JSON.stringify(r.body));
 
   // ---------- ⑦ AI 辅助：没配模型时明确 400，而不是 500 ----------
-  r = await A.post('/notes', { title: 'E2E AI 素材', content: '这是一段用来让 AI 处理的正文，长度足够。' });
+  // 正文用英文：v1.13.15 起「译成中文」在正文已是中文时会先以 400 拦下（不白烧 token），
+  // 那样这三条就测不到「未配置 AI」这条路了。中文短路的用例在 scripts/test-note-ai-translate.mjs。
+  r = await A.post('/notes', { title: 'E2E AI 素材', content: 'This note exists so the AI assist routes have something to chew on. It is long enough.' });
   const aiNote = r.body.id; created.push(aiNote);
 
   r = await A.post(`/notes/${aiNote}/ai-assist`, { action: 'summarize' });

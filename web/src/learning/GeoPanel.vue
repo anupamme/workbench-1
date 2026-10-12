@@ -9,8 +9,8 @@
         <a class="geo-open" :href="url" target="_blank" rel="noopener">↗ 新窗口打开</a>
       </h3>
 
-      <!-- 地球仪是第三方独立页面（自带完整性自检，必须原样加载、不能改写），
-           所以用全高 iframe 原样嵌入——功能与单独打开完全一致。 -->
+      <!-- 地球仪是本站自制的独立页面（`geo/globe.html`，无第三方版权依赖），
+           用全高 iframe 原样嵌入——功能与单独打开完全一致。 -->
       <div class="geo-frame-wrap">
         <iframe
           v-if="!checking && !missing"
@@ -23,11 +23,11 @@
         ></iframe>
         <div v-else-if="checking" class="geo-state">正在加载地球仪…</div>
         <div v-else class="geo-state err">
-          <div>地球仪页面没有随本版前端一起发布（<code>geo/earth-globe.html</code> 取不到）。</div>
+          <div>地球仪页面没有随本版前端一起发布（<code>geo/globe.html</code> 取不到）。</div>
           <div class="muted">请让管理员用最新升级包重新部署一次；本页其余功能不受影响。</div>
         </div>
         <div v-if="!loaded && !checking && !missing" class="geo-mask">
-          <span>正在加载地球仪（约 6 MB，含 8K 底图，首次稍慢）…</span>
+          <span>正在加载地球仪（约 2.6 MB，含 5400×2700 底图，首次稍慢）…</span>
         </div>
       </div>
     </div>
@@ -35,15 +35,16 @@
 </template>
 
 <script setup>
-// 学习 → 地理 tab（v1.13.14）：把参考页「地球仪 · 3D模拟实验室 V0916-1」完整搬进工作台。
-// 该页主脚本对自身做完整性自检（全文哈希 + 纹理首尾 + DOM 校验），任何改写都会让它自毁成
-// 「页面完整性校验失败」——所以这里**只能原样托管 + iframe 嵌入**，不做任何源码移植/裁剪。
-// 文件放在 web/public/geo/earth-globe.html（vite 原样拷进 dist 根，随升级包分发）。
+// 学习 → 地理 tab（v1.13.15）：地球仪是本站自制页 `geo/globe.html`，源码在本仓库
+// （web/public/geo/globe.html），无第三方版权依赖、无完整性自检——可以随时改。
+// 历史：v1.13.14 嵌的是第三方页 earth-globe.html（© JZS LAB 尖子声原创，自带全文哈希
+// 自检、只能原样托管），已按用户要求整套自研替换，那份文件已移出构建树。
+// vite 把 web/public/** 原样拷进 dist 根，所以它随升级包分发。
 import { ref, onMounted } from 'vue';
 import { prefixUrl } from '../api';
 
 // 同源相对地址（含 fnOS 网关 /app/{appname} 前缀）——iframe 的 src 不能用 /api 那套 token 拼接
-const url = ref(prefixUrl('/geo/earth-globe.html'));
+const url = ref(prefixUrl('/geo/globe.html'));
 const loaded = ref(false);
 const checking = ref(true);
 const missing = ref(false);

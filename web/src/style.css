@@ -306,6 +306,8 @@ a.link:hover { text-decoration: underline; }
 .msg { padding: 10px 13px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
 .msg.err { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.3); }
 .msg.ok { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.3); }
+/* v1.13.15：不是错误但要让用户看见的一声提醒（如「译文到了长度上限」），别拿 .err 的红条吓人 */
+.msg.warn { background: rgba(251,191,36,.12); color: var(--amber); border: 1px solid rgba(251,191,36,.3); }
 
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,.55);

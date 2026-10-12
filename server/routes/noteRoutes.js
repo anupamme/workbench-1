@@ -308,6 +308,54 @@ router.post('/notes/:id/ai-meta', async (req, res) => {
 // 不带 session_id 时行为与本功能上线前**逐字一致**（不脱敏）。
 const SYSTEM_WRITER = '你是中文写作助手，输出直接可用，不要客套话。';
 
+// ---- 语言识别（v1.13.15）----
+// 翻译一律「译成中文」：v1.13.14 及以前把提示词写死成「翻译成英文」，英文笔记点「翻译」
+// 等于原样退回，也从不告诉用户识别到了什么语言。
+// 判据是「各语种字母的条数占比」：代码块 / 行内代码 / URL 先剥掉（那里的英文不该参与判断），
+// 假名与谚文单独计数（否则日文笔记会被汉字占比误判成中文）。
+const RE_HAN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g;
+const RE_KANA = /[\u3040-\u30ff]/g;
+const RE_HANGUL = /[\uac00-\ud7af\u1100-\u11ff]/g;
+const RE_CYR = /[\u0400-\u04ff]/g;
+const RE_ARAB = /[\u0590-\u06ff]/g;
+const RE_LATIN = /[A-Za-z\u00c0-\u024f]/g;
+const RE_OTHER = /[\u0370-\u03ff\u0900-\u097f\u0e00-\u0e7f]/g;
+const RE_WORD = /[A-Za-z\u00c0-\u024f\u0370-\u03ff\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f]+/g;
+
+/** 取「像语言的正文」：剥掉代码块 / 行内代码 / URL。 */
+function langBody(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/~~~[\s\S]*?~~~/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/https?:\/\S+/g, ' ');
+}
+
+/** 'zh' 已是中文 / 'en' 'ja' 'ko' 'ru' 'ar' 'other' 需要译成中文 / 'unknown' 太短，交给模型自己判断。 */
+function detectLang(text) {
+  const s = langBody(text);
+  const n = (re) => (s.match(re) || []).length;
+  const han = n(RE_HAN), kana = n(RE_KANA), hangul = n(RE_HANGUL);
+  const cyr = n(RE_CYR), arab = n(RE_ARAB), latin = n(RE_LATIN), other = n(RE_OTHER);
+  const letters = han + kana + hangul + cyr + arab + latin + other;
+  if (letters < 8) return 'unknown';                 // 太短（"ok" / "好" / 一堆 URL），别硬猜
+  if (kana > 0.15 * letters) return 'ja';            // 日文：汉字再多，只要有假名就不是中文
+  if (hangul > 0.15 * letters) return 'ko';          // 韩文
+  if (han * 2 >= letters) return 'zh';               // 汉字占一半以上才算中文
+  if (latin >= cyr && latin >= arab && latin >= other) return 'en';
+  if (cyr >= arab && cyr >= other) return 'ru';
+  if (arab >= other) return 'ar';
+  return 'other';
+}
+/** 翻译前的体检：源文已是中文就别烧 token（也别假装翻译了）。返回 null 表示可以继续。 */
+function translateGuard(action, src) {
+  if (action !== 'translate') return null;
+  if (detectLang(src) === 'zh') {
+    return '这段内容已经是中文，不需要翻译。只想把其中的外文段落译成中文的话，选中那几段再点「译成中文」。';
+  }
+  return null;
+}
+
 /** 组装本轮要发给 AI 的 user 文本（preview 与正式发送共用，保证两次内容完全一致）。 */
 function buildAssistPrompt(action, src) {
   if (action === 'summarize') {
@@ -317,7 +365,15 @@ function buildAssistPrompt(action, src) {
     return `请顺着下面这段笔记的思路继续写下去，保持原有的语气、人称与 Markdown 结构，只输出续写的内容，不要重复原文，也不要解释。\n\n${src.slice(-2000)}`;
   }
   if (action === 'translate') {
-    return `请把下面的内容翻译成英文，保留 Markdown 结构与代码块，只输出译文，不要解释。\n\n${src.slice(0, 6000)}`;
+    return [
+      '请把下面的内容翻译成**简体中文**。要求：',
+      '1. 原文无论是什么语言（英语、日语、韩语、法语、德语、俄语……）都译成简体中文，不要译成英文，也不要原样退回；',
+      '2. 原文里已经是中文的段落保持原样，不要改写、不要润色；',
+      '3. 保留原有 Markdown 结构（标题、列表、表格、链接）与代码块内容 —— 代码、命令、变量名、专有名词（人名/产品名）不翻译；',
+      '4. 只输出译文本身，不要写「翻译如下」「以下是译文」之类的前后缀，也不要解释或补充原文没有的内容。',
+      '',
+      src.slice(0, 6000),
+    ].join('\n');
   }
   return null;
 }
@@ -330,19 +386,23 @@ router.post('/notes/:id/ai-assist/preview', (req, res) => {
   if (!row) return res.status(404).json({ error: '笔记不存在' });
   const src = String(b.selection || '') || String(row.content || '');
   if (!src.trim()) return res.status(400).json({ error: '没有可处理的正文' });
+  // 「已经是中文就别翻译」提前到预览阶段拦——等 AI 跑完再说等于白烧 token，还会让用户以为翻了
+  const detected = detectLang(src);
+  const guard = translateGuard(action, src);
+  if (guard) return res.status(400).json({ error: guard, detected });
   const prompt = buildAssistPrompt(action, src);
   if (!prompt) return res.status(400).json({ error: `不支持的 action：${action}` });
   const desens = require('../services/desensitizeService');
   const opts = desens.optionsFrom(req.tdb, {});
   // 总开关在「效率工具 → AI脱敏」里关掉时如实告知，而不是假装脱敏了还照原文发出去
-  if (!opts.enabled) return res.json({ session_id: 0, disabled: true, mapping: [], count: 0, masked_preview: '' });
+  if (!opts.enabled) return res.json({ session_id: 0, disabled: true, mapping: [], count: 0, masked_preview: '', detected });
   const enc = desens.encode(prompt, opts);
   const sessionId = desens.record(req.tdb, {
     scope: 'note_ai', ref: String(row.id), userId: req.user && req.user.id,
     mapping: enc.mapping, maskedText: enc.masked, maskedPreview: enc.masked, status: 'preview',
   });
   // 预览只回显前 4000 字，避免整篇正文回传；真正发送时用库里的完整脱敏文本
-  res.json({ session_id: sessionId, masked_preview: enc.masked.slice(0, 4000), mapping: enc.mapping, count: enc.count });
+  res.json({ session_id: sessionId, masked_preview: enc.masked.slice(0, 4000), mapping: enc.mapping, count: enc.count, detected });
 });
 
 router.post('/notes/:id/ai-assist', async (req, res) => {
@@ -353,7 +413,7 @@ router.post('/notes/:id/ai-assist', async (req, res) => {
 
   const desens = require('../services/desensitizeService');
   const sessionId = int(b.session_id, 0);
-  let prompt, mapping = null;
+  let prompt, mapping = null, detected = null;
   if (sessionId) {
     // 已确认的脱敏会话：用预览时存下的脱敏文本直接发，杜绝「预览与发送不一致」
     const sess = desens.getHistory(req.tdb, sessionId);
@@ -367,6 +427,9 @@ router.post('/notes/:id/ai-assist', async (req, res) => {
     // 参数校验一律排在「有没有配 AI」之前——没配模型时也该先告诉用户「正文是空的」
     // 「action 不认识」，而不是拿一句「未配置 AI 模型」把真正的错因盖掉。
     if (!src.trim()) return res.status(400).json({ error: '没有可处理的正文' });
+    detected = detectLang(src);
+    const guard = translateGuard(action, src);
+    if (guard) return res.status(400).json({ error: guard, detected });
     prompt = buildAssistPrompt(action, src);
     if (!prompt) return res.status(400).json({ error: `不支持的 action：${action}` });
   }
@@ -376,14 +439,19 @@ router.post('/notes/:id/ai-assist', async (req, res) => {
   try {
     const r = await aiService.chatEx(
       [{ role: 'system', content: SYSTEM_WRITER }, { role: 'user', content: prompt }],
-      { maxTokens: 1500, temperature: action === 'translate' ? 0.3 : 0.7, tdb: req.tdb }
+      // 翻译单独放宽额度：正文上限 6000 字，英译中很容易超过 1500 token，截断的译文比不译还误导人
+      { maxTokens: action === 'translate' ? 4000 : 1500, temperature: action === 'translate' ? 0.3 : 0.7, tdb: req.tdb }
     );
     let result = String(r.content || '');
     if (mapping && mapping.length) result = desens.decode(result, mapping);   // 复原真名
     if (sessionId) {
       try { desens.setHistoryStatus(req.tdb, sessionId, 'sent'); } catch { /* 状态更新失败不影响结果 */ }
     }
-    res.json({ ok: true, action, result, model: r.model || '', usage: r.usage || null, masked: !!mapping });
+    // 被 max_tokens 掐断时如实回报（finish_reason=length），别让用户以为这就是全部译文
+    res.json({
+      ok: true, action, result, model: r.model || '', usage: r.usage || null,
+      masked: !!mapping, detected, truncated: r.finish_reason === 'length',
+    });
   } catch (e) {
     if (sessionId) { try { desens.setHistoryStatus(req.tdb, sessionId, 'failed'); } catch { /* 忽略 */ } }
     res.status(400).json({ error: e.message });

@@ -1,0 +1,1314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>地理 · 3D 地球仪</title>
+<meta name="description" content="可旋转、可缩放、可点读经纬度的 3D 地球仪与 2D 世界地图（教学用）">
+<!-- 底图来源：NASA Earth Observatory — Blue Marble Next Generation（世界地图，公有领域） -->
+<meta name="texture-source" content="NASA Earth Observatory — Blue Marble Next Generation, public domain">
+<style>
+  :root {
+    --bg: #05070d;
+    --bg2: #0a1020;
+    --card: rgba(10, 17, 30, .84);
+    --card-solid: #0b1322;
+    --line: rgba(110, 170, 240, .18);
+    --line-strong: rgba(110, 170, 240, .34);
+    --txt: #dce7f7;
+    --muted: #8ea3bd;
+    --accent: #4fd1ff;
+    --accent2: #7c9bff;
+    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--txt);
+    font: 14px/1.55 "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+
+  /* ---------- 整体骨架 ---------- */
+  #app { height: 100%; display: flex; flex-direction: column; }
+
+  .topbar {
+    flex: none; height: 54px; display: flex; align-items: center; gap: 14px;
+    padding: 0 14px; background: linear-gradient(180deg, #0d1626, #0a1120);
+    border-bottom: 1px solid var(--line); position: relative; z-index: 30;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; letter-spacing: .3px; white-space: nowrap; }
+  .brand .globe-ico { font-size: 18px; }
+  .brand .ver { font-size: 11px; font-weight: 400; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; }
+  .topnav { margin-left: auto; display: flex; gap: 8px; }
+  .navbtn {
+    background: rgba(255,255,255,.045); border: 1px solid var(--line); color: var(--txt);
+    padding: 7px 14px; border-radius: 999px; font-size: 13px; transition: .16s;
+  }
+  .navbtn:hover { border-color: var(--line-strong); background: rgba(255,255,255,.08); }
+  .navbtn.active {
+    background: linear-gradient(180deg, rgba(79,209,255,.28), rgba(124,155,255,.2));
+    border-color: rgba(79,209,255,.65); color: #eaf6ff; box-shadow: 0 0 0 1px rgba(79,209,255,.15) inset;
+  }
+
+  #main { flex: 1; display: flex; min-height: 0; position: relative; }
+
+  /* ---------- 舞台 ---------- */
+  #stage {
+    flex: 1; min-width: 0; min-height: 0; position: relative; overflow: hidden;
+    background:
+      radial-gradient(120% 90% at 50% 42%, #0d1a2e 0%, #070c16 55%, #04060b 100%);
+    touch-action: none;
+  }
+  #stage::after { /* 极淡的星点 */
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+    background-image:
+      radial-gradient(1.4px 1.4px at 12% 18%, rgba(255,255,255,.6), transparent 60%),
+      radial-gradient(1.2px 1.2px at 78% 12%, rgba(255,255,255,.45), transparent 60%),
+      radial-gradient(1.6px 1.6px at 88% 62%, rgba(255,255,255,.5), transparent 60%),
+      radial-gradient(1.2px 1.2px at 26% 76%, rgba(255,255,255,.4), transparent 60%),
+      radial-gradient(1.3px 1.3px at 62% 88%, rgba(255,255,255,.42), transparent 60%),
+      radial-gradient(1.1px 1.1px at 45% 8%, rgba(255,255,255,.35), transparent 60%);
+  }
+
+  #globe-container { position: absolute; inset: 0; cursor: grab; }
+  #globe-container.dragging { cursor: grabbing; }
+  #globe-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  #axis-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .view-layer { position: absolute; inset: 0; pointer-events: none; }
+  .view-layer.hidden-labels .geo-label { display: none; }
+
+  /* 地球表面的地名 */
+  .geo-label {
+    position: absolute; transform: translate(-50%, -50%); white-space: nowrap;
+    color: #eef6ff; font-size: 12.5px; font-weight: 600; letter-spacing: .5px;
+    text-shadow: 0 0 4px rgba(0,0,0,.95), 0 0 9px rgba(0,0,0,.8), 0 1px 2px rgba(0,0,0,.9);
+    transition: opacity .2s;
+  }
+  .geo-label.ocean { font-weight: 500; font-style: italic; color: #cfe6ff; letter-spacing: 1px; }
+
+  /* 边缘经纬度刻度 */
+  .rim-label {
+    position: absolute; transform: translate(-50%, -50%); white-space: nowrap;
+    font-size: 11px; color: #9fb6d2; font-variant-numeric: tabular-nums;
+    padding: 1px 4px; border-radius: 4px; background: rgba(6,11,20,.55);
+    border: 1px solid rgba(110,170,240,.12);
+  }
+  .rim-label.special { color: #eaf2ff; border-color: rgba(110,170,240,.3); background: rgba(12,22,40,.72); }
+
+  /* 点击标记 */
+  #marker-3d, #marker-2d {
+    position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; pointer-events: none; display: none;
+  }
+  #marker-3d::before, #marker-2d::before {
+    content: ""; position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid var(--accent); box-shadow: 0 0 8px rgba(79,209,255,.9), 0 0 0 3px rgba(79,209,255,.18);
+  }
+  #marker-3d::after, #marker-2d::after {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
+    border-radius: 50%; background: #fff; box-shadow: 0 0 6px rgba(79,209,255,1);
+  }
+
+  /* ---------- 2D 平面地图 ---------- */
+  #map-2d-container {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 18px;
+  }
+  body.mode-2d #map-2d-container { display: flex; }
+  body.mode-2d #globe-container, body.mode-2d #axis-overlay { display: none; }
+
+  .map-wrapper {
+    position: relative; width: 100%; max-width: min(100%, calc((100vh - 240px) * 2));
+    aspect-ratio: 2 / 1; border-radius: 8px; overflow: hidden;
+    box-shadow: 0 14px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(110,170,240,.22), 0 0 0 6px rgba(9,15,26,.6);
+    cursor: crosshair; background: #06101d;
+  }
+  #earth-texture { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #map-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .map-scrim {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(90% 80% at 50% 50%, transparent 45%, rgba(0,10,25,.35) 100%);
+  }
+  #labels-2d-layer .geo-label { font-size: 11.5px; }
+  .map-lat-labels { position: absolute; left: 0; top: 0; bottom: 0; width: 46px; pointer-events: none; }
+  .map-lon-labels { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; pointer-events: none; }
+  .map-edge {
+    position: absolute; font-size: 10.5px; color: #b9cde6; font-variant-numeric: tabular-nums;
+    background: rgba(6,11,20,.62); border: 1px solid rgba(110,170,240,.16); border-radius: 4px; padding: 0 4px;
+    white-space: nowrap;
+  }
+  .map-lat-labels .map-edge { right: 0; transform: translateY(-50%); }
+  .map-lon-labels .map-edge { top: 0; transform: translateX(-50%); }
+
+  /* ---------- 右侧控制面板 ---------- */
+  #panel {
+    flex: none; width: 272px; background: linear-gradient(180deg, #0c1424, #0a1120);
+    border-left: 1px solid var(--line); display: flex; flex-direction: column;
+    transition: width .22s ease; overflow: hidden; z-index: 20;
+  }
+  body.panel-hidden #panel { width: 0; border-left-color: transparent; }
+  #panel-inner { width: 272px; flex: 1; overflow-y: auto; padding: 12px; }
+  .panel-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13.5px; letter-spacing: .4px; padding: 2px 2px 10px; }
+  .panel-head .sp { flex: 1; }
+  .mini-btn {
+    background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 6px;
+    padding: 3px 9px; font-size: 12px; color: var(--txt);
+  }
+  .mini-btn:hover { background: rgba(255,255,255,.12); border-color: var(--line-strong); }
+  .sect { border-top: 1px solid var(--line); padding: 11px 2px; }
+  .sect:first-of-type { border-top: 0; }
+  .sect-title { font-size: 11.5px; color: var(--muted); letter-spacing: 1.2px; margin-bottom: 8px; }
+  .chk { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; user-select: none; }
+  .chk input { width: 15px; height: 15px; accent-color: var(--accent); }
+  .chk span.sw { width: 16px; height: 3px; border-radius: 2px; }
+  .field { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13px; }
+  .field > label { color: var(--muted); white-space: nowrap; }
+  select {
+    background: #0e1830; border: 1px solid var(--line-strong); border-radius: 6px; padding: 5px 8px; font-size: 13px; flex: 1;
+  }
+  .seg { display: flex; gap: 6px; }
+  .seg button {
+    flex: 1; background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 6px; padding: 6px 4px; font-size: 12.5px;
+  }
+  .seg button:hover { background: rgba(255,255,255,.1); }
+  .seg button.on { background: linear-gradient(180deg, rgba(79,209,255,.28), rgba(124,155,255,.18)); border-color: rgba(79,209,255,.6); }
+  .wide-btn {
+    width: 100%; background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px; font-size: 13px; margin-top: 4px;
+  }
+  .wide-btn:hover { background: rgba(255,255,255,.1); border-color: var(--line-strong); }
+  .wide-btn.primary { background: linear-gradient(180deg, rgba(79,209,255,.25), rgba(124,155,255,.15)); border-color: rgba(79,209,255,.5); }
+  input[type=range] { flex: 1; accent-color: var(--accent); min-width: 0; }
+  .val { font-variant-numeric: tabular-nums; color: #cfe2fb; font-size: 12.5px; min-width: 52px; text-align: right; }
+  .hint { font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+  .credit { font-size: 11px; color: #6d819a; line-height: 1.7; padding-top: 10px; }
+
+  /* 面板隐藏后的浮出按钮 */
+  #panel-show {
+    position: absolute; right: 14px; top: 14px; z-index: 25; display: none;
+    background: var(--card); border: 1px solid var(--line-strong); border-radius: 999px;
+    padding: 7px 14px; font-size: 12.5px; backdrop-filter: blur(8px); box-shadow: var(--shadow);
+  }
+  body.panel-hidden #panel-show { display: block; }
+
+  /* ---------- 图例 ---------- */
+  #legend {
+    position: absolute; left: 14px; bottom: 14px; z-index: 15; max-width: 265px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 11px 10px; backdrop-filter: blur(9px); box-shadow: var(--shadow); font-size: 12px;
+  }
+  #legend .lg-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 12.5px; letter-spacing: .5px; }
+  #legend .lg-head .sp { flex: 1; }
+  #legend .lg-body { margin-top: 7px; display: grid; gap: 4px; }
+  body.legend-hidden #legend .lg-body { display: none; }
+  .lg-row { display: flex; align-items: center; gap: 8px; color: #c6d6ea; }
+  .lg-row .ln { width: 22px; height: 0; flex: none; border-top-width: 3px; border-top-style: solid; border-radius: 2px; }
+  .lg-row .ln.dashed { border-top-style: dashed; border-top-width: 3px; }
+
+  /* ---------- 坐标查询坞 ---------- */
+  #dock {
+    position: absolute; right: 14px; bottom: 14px; z-index: 15; width: 292px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    backdrop-filter: blur(9px); box-shadow: var(--shadow); overflow: hidden;
+  }
+  #dock .dk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  #dock .dk-head .t { font-size: 12.5px; font-weight: 600; letter-spacing: .4px; margin-right: 2px; }
+  .dk-btn {
+    background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11.5px;
+  }
+  .dk-btn:hover { background: rgba(255,255,255,.11); }
+  .dk-btn.on { background: linear-gradient(180deg, rgba(79,209,255,.28), rgba(124,155,255,.18)); border-color: rgba(79,209,255,.6); }
+  #data-panel { position: relative; min-height: 108px; }
+  #coordinate-result {
+    padding: 12px 12px 14px; font-variant-numeric: tabular-nums; line-height: 1.9;
+  }
+  #coordinate-result .ph { color: var(--muted); font-size: 12.5px; line-height: 1.8; }
+  #coordinate-result .r-row { display: flex; align-items: baseline; gap: 8px; }
+  #coordinate-result .r-key { color: var(--muted); font-size: 12px; width: 30px; flex: none; }
+  #coordinate-result .r-val { font-size: 17px; font-weight: 600; color: #eaf6ff; letter-spacing: .3px; }
+  #coordinate-result .r-sub { color: var(--muted); font-size: 12px; }
+  #coordinate-result .r-tags { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  #coordinate-result .r-tags span { font-size: 11px; color: #bcd7f5; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; }
+  #scratch-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: none; touch-action: none; cursor: crosshair; }
+  #scratch-hint {
+    position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; font-size: 11.5px; color: var(--muted);
+    pointer-events: none; display: none;
+  }
+  body.scratch #scratch-canvas, body.scratch #scratch-hint { display: block; }
+
+  /* ---------- 加载 / 兜底 ---------- */
+  #loading {
+    position: absolute; inset: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; background: radial-gradient(80% 70% at 50% 45%, #0b1626, #04060b 75%); transition: opacity .5s; font-size: 13px; color: var(--muted);
+  }
+  #loading.done { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(79,209,255,.18);
+    border-top-color: var(--accent); animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #fatal { position: absolute; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center; background: #05070d; color: #ffb4b4; }
+
+  .footbar {
+    position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 10;
+    font-size: 11px; color: #6d819a; pointer-events: none; white-space: nowrap;
+  }
+
+  /* ---------- 窄屏 ---------- */
+  @media (max-width: 980px) {
+    #main { flex-direction: column; }
+    #panel { width: 100%; border-left: 0; border-top: 1px solid var(--line); max-height: 46vh; }
+    body.panel-hidden #panel { width: 100%; max-height: 0; }
+    #panel-inner { width: 100%; }
+    #legend { max-width: 190px; font-size: 11px; }
+    #dock { width: 250px; }
+    .footbar { display: none; }
+  }
+  @media (max-width: 640px) {
+    .brand .ver { display: none; }
+    .navbtn { padding: 6px 10px; font-size: 12px; }
+    #legend .lg-body { display: none; }
+    #dock { width: 210px; }
+    .map-lat-labels { width: 34px; }
+  }
+  @media (max-width: 560px) {
+    #legend { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand"><span class="globe-ico">🌏</span>地理 · 3D 地球仪<span class="ver">自制版 v1.0.1</span></div>
+    <div class="topnav">
+      <button class="navbtn active" id="btn-3d">3D 地球仪模式</button>
+      <button class="navbtn" id="btn-2d">2D 平面地图模式</button>
+    </div>
+  </header>
+
+  <div id="main">
+    <div id="stage">
+      <!-- 3D -->
+      <div id="globe-container">
+        <canvas id="globe-canvas"></canvas>
+        <svg id="axis-overlay" aria-hidden="true">
+          <line id="axis-line" x1="0" y1="0" x2="0" y2="0" stroke="#bfc7d4" stroke-width="1.6" stroke-linecap="round" opacity=".85"></line>
+          <line id="axis-halo" x1="0" y1="0" x2="0" y2="0" stroke="#bfc7d4" stroke-width="5" stroke-linecap="round" opacity=".12"></line>
+          <g id="axis-tips" font-size="11" font-weight="700" fill="#dfe8f5" text-anchor="middle">
+            <text id="axis-n">N</text>
+            <text id="axis-s">S</text>
+          </g>
+        </svg>
+        <div id="labels-3d-layer" class="view-layer"></div>
+        <div id="rim-3d-layer" class="view-layer"></div>
+        <div id="marker-3d"></div>
+      </div>
+
+      <!-- 2D -->
+      <div id="map-2d-container">
+        <div class="map-wrapper" id="map2d">
+          <img id="earth-texture" alt="世界地图（等距圆柱投影）" draggable="false">
+          <svg id="map-svg" viewBox="0 0 360 180" preserveAspectRatio="none"></svg>
+          <div class="map-scrim"></div>
+          <div id="labels-2d-layer" class="view-layer"></div>
+          <div class="map-lat-labels" id="map-lat-labels"></div>
+          <div class="map-lon-labels" id="map-lon-labels"></div>
+          <div id="marker-2d"></div>
+        </div>
+      </div>
+
+      <!-- 图例 -->
+      <div id="legend">
+        <div class="lg-head">图例<span class="sp"></span><button class="mini-btn" id="legend-toggle">收起</button></div>
+        <div class="lg-body">
+          <div class="lg-row"><i class="ln" style="border-top-color:#ff2929"></i>赤道（0°）</div>
+          <div class="lg-row"><i class="ln" style="border-top-color:#ffeb40"></i>本初子午线（0°）</div>
+          <div class="lg-row"><i class="ln" style="border-top-color:#ff40ff"></i>20°W 与 160°E</div>
+          <div class="lg-row"><i class="ln dashed" style="border-top-color:#40ff59"></i>南北回归线（23.5°）</div>
+          <div class="lg-row"><i class="ln dashed" style="border-top-color:#59ffff"></i>南北极圈（66.5°）</div>
+          <div class="lg-row"><i class="ln" style="border-top-color:rgba(255,255,255,.7)"></i>普通经纬线（<b id="lg-step">15</b>° 间隔）</div>
+          <div class="lg-row"><i class="ln" style="border-top-color:#bfc7d4"></i>地轴（倾斜 23.5°）</div>
+        </div>
+      </div>
+
+      <!-- 坐标查询 -->
+      <div id="dock">
+        <div class="dk-head">
+          <span class="t">坐标查询</span>
+          <button class="dk-btn on" data-mode="direct">直接显示</button>
+          <button class="dk-btn" data-mode="scratch">刮一刮</button>
+          <button class="dk-btn" id="scratch-reset">↻ 再遮住</button>
+        </div>
+        <div id="data-panel">
+          <div id="coordinate-result"><div class="ph">请点击地图或地球查询坐标位置</div></div>
+          <canvas id="scratch-canvas"></canvas>
+          <div id="scratch-hint">✦ 按住并滑动，刮开查看经纬度 ✦</div>
+        </div>
+      </div>
+
+      <div class="footbar">拖动旋转 · 滚轮缩放 · 单击点读经纬度</div>
+      <button id="panel-show">控制面板</button>
+
+      <div id="loading"><div class="spinner"></div><div id="loading-text">正在加载地球贴图…</div></div>
+      <div id="fatal"></div>
+    </div>
+
+    <aside id="panel">
+      <div id="panel-inner">
+        <div class="panel-head">控制面板<span class="sp"></span><button class="mini-btn" id="panel-toggle">隐藏</button></div>
+
+        <div class="sect">
+          <div class="sect-title">显示</div>
+          <label class="chk"><input type="checkbox" id="tg-meridians" checked><span class="sw" style="background:#ffeb40"></span>经线</label>
+          <label class="chk"><input type="checkbox" id="tg-parallels" checked><span class="sw" style="background:#ff2929"></span>纬线</label>
+          <label class="chk"><input type="checkbox" id="tg-labels" checked>大洲 / 大洋名称</label>
+          <div class="field"><label>网格间隔</label>
+            <select id="grid-step">
+              <option value="5">5°</option>
+              <option value="10">10°</option>
+              <option value="15" selected>15°</option>
+              <option value="30">30°</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sect">
+          <div class="sect-title">视角</div>
+          <div class="seg">
+            <button data-view="globe" class="on">正球</button>
+            <button data-view="north">北极</button>
+            <button data-view="south">南极</button>
+          </div>
+          <button class="wide-btn" id="reset-view">↺ 复位视角</button>
+        </div>
+
+        <div class="sect">
+          <div class="sect-title">自转</div>
+          <button class="wide-btn primary" id="spin-toggle">▶ 播放自转</button>
+          <div class="field"><label>自转速度</label><input type="range" id="spin-speed" min="2" max="90" step="1" value="18"><span class="val" id="spin-val">18°/秒</span></div>
+        </div>
+
+        <div class="sect">
+          <div class="sect-title">其它</div>
+          <button class="wide-btn" id="fullscreen-btn">⛶ 全屏</button>
+          <div class="hint" style="margin-top:9px">
+            地球仪：按住拖动旋转、滚轮缩放、单击读经纬度。<br>
+            平面图：单击读经纬度；两图共用同一套经纬网与图例。
+          </div>
+        </div>
+
+        <div class="credit">
+          底图：NASA Earth Observatory · Blue Marble Next Generation（公有领域，致谢 NASA）<br>
+          本页为自研实现，可自由用于教学。
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  var FOV = 42 * D2R;                  // 垂直视场角
+  var TEX_URL = 'textures/blue-marble-5400x2700.jpg';
+
+  /* ============================================================
+   *  一、地名数据（大洲 / 大洋）
+   * ============================================================ */
+  var PLACES = [
+    { t: '北极', lat: 86, lon: 0, k: 'land' },
+    { t: '北美洲', lat: 45, lon: -100, k: 'land' },
+    { t: '南美洲', lat: -14, lon: -60, k: 'land' },
+    { t: '欧洲', lat: 52, lon: 15, k: 'land' },
+    { t: '非洲', lat: 4, lon: 19, k: 'land' },
+    { t: '亚洲', lat: 46, lon: 95, k: 'land' },
+    { t: '大洋洲', lat: -25, lon: 134, k: 'land' },
+    { t: '南极洲', lat: -78, lon: 40, k: 'land' },
+    { t: '北冰洋', lat: 78, lon: -70, k: 'ocean' },
+    { t: '太平洋', lat: -6, lon: -140, k: 'ocean' },
+    { t: '大西洋', lat: 4, lon: -30, k: 'ocean' },
+    { t: '印度洋', lat: -26, lon: 78, k: 'ocean' }
+  ];
+
+  var SPECIAL_LAT = [23.5, -23.5, 66.5, -66.5];   // 回归线 / 极圈
+  var SPECIAL_LON = [-20, 160];                    // 20°W / 160°E
+
+  /* ============================================================
+   *  二、矩阵小工具（列主序，与 WebGL 一致）
+   * ============================================================ */
+  function mul4(a, b) {                            // 返回 a·b
+    var o = new Float32Array(16);
+    for (var c = 0; c < 4; c++) {
+      for (var r = 0; r < 4; r++) {
+        o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+      }
+    }
+    return o;
+  }
+  function perspective(fovy, aspect, near, far) {
+    var f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+    var o = new Float32Array(16);
+    o[0] = f / aspect; o[5] = f; o[10] = (far + near) * nf; o[11] = -1; o[14] = 2 * far * near * nf;
+    return o;
+  }
+  function lookAtZ(dist) {                         // 相机在 +Z，看向原点
+    var o = new Float32Array(16);
+    o[0] = 1; o[5] = 1; o[10] = 1; o[14] = -dist; o[15] = 1;
+    return o;
+  }
+  function rot3Mul(a, b) {                         // 行主序 3x3：返回 a·b
+    var o = new Array(9);
+    for (var r = 0; r < 3; r++) for (var c = 0; c < 3; c++) {
+      o[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+    }
+    return o;
+  }
+  function rot3(mat, v) {                          // 行主序乘列向量
+    return [
+      mat[0] * v[0] + mat[1] * v[1] + mat[2] * v[2],
+      mat[3] * v[0] + mat[4] * v[1] + mat[5] * v[2],
+      mat[6] * v[0] + mat[7] * v[1] + mat[8] * v[2]
+    ];
+  }
+  function transpose3(m) { return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]]; }
+
+  // 经纬度 → 模型空间单位向量：北极 +Y，本初子午线 +X，**东经 90° 指向 −Z**。
+  // 取 −Z 是为了让 (东, 北, 外) 成右手系——用 +Z 的话整颗地球是镜像的（东边跑到屏幕左边）。
+  function dirOf(lat, lon) {
+    var a = lat * D2R, b = lon * D2R, ca = Math.cos(a);
+    return [ca * Math.cos(b), Math.sin(a), -ca * Math.sin(b)];
+  }
+  // 旋转：把 (latc, lonc) 转到相机正前方（+Z），并让东边落在屏幕右侧。
+  // 推导：要 R·dirOf(latc,lonc) = (0,0,1) 且中心处 +lon 落在 +x → R = Rx(latc)·Ry(−90° − lonc)。
+  function viewRotation(latc, lonc) {
+    var a = latc * D2R, b = (-90 - lonc) * D2R;
+    var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
+    var rx = [1, 0, 0, 0, ca, -sa, 0, sa, ca];     // Rx(a)
+    var ry = [cb, 0, sb, 0, 1, 0, -sb, 0, cb];     // Ry(b)
+    return rot3Mul(rx, ry);
+  }
+
+  /* ============================================================
+   *  三、渲染状态
+   * ============================================================ */
+  var cam = { lat: 12, lon: -30, dist: 2.75 };     // 视点中心 + 相机距离（缩放）
+  var opts = { meridians: true, parallels: true, names: true, step: 15, spin: false, speed: 18 };
+  var marker = null;                               // {lat, lon}
+  var mode = '3d';
+  var dirty = true;
+
+  var stage = document.getElementById('stage');
+  var glWrap = document.getElementById('globe-container');
+  var canvas = document.getElementById('globe-canvas');
+  var geoLabels3D = document.getElementById('labels-3d-layer');
+  var rimLabels3D = document.getElementById('rim-3d-layer');
+  var marker3D = document.getElementById('marker-3d');
+  var axisLine = document.getElementById('axis-line'), axisHalo = document.getElementById('axis-halo');
+  var axisN = document.getElementById('axis-n'), axisS = document.getElementById('axis-s');
+  var texImg = document.getElementById('earth-texture');
+
+  var gl = null, prog = null, tex = null, uniforms = {}, vbo = null, ibo = null, indexCount = 0;
+  var R3 = viewRotation(cam.lat, cam.lon), Rinv = transpose3(R3);
+  var cssW = 0, cssH = 0, dpr = 1;
+  var rimPx = 200;                                 // 地球在屏幕上的半径（像素）
+
+  /* ============================================================
+   *  四、WebGL 初始化
+   * ============================================================ */
+  var VS = [
+    'attribute vec3 aPos;',
+    'uniform mat4 uMVP;',
+    'uniform mat3 uRot;',
+    'varying vec3 vModel;',                       // 模型空间方向（贴图 / 经纬网按它采样）
+    'varying vec3 vView;',                        // 相机空间方向（只用来算明暗）
+    'void main() {',
+    '  vModel = aPos;',
+    '  vView = uRot * aPos;',
+    '  gl_Position = uMVP * vec4(aPos, 1.0);',
+    '}'
+  ].join('\n');
+
+  // 经纬网直接在地球表面按解析式绘制（不用另建线段几何体），
+  // 线宽随缩放自动换算，特殊线（赤道/本初子午线/20°W·160°E/回归线/极圈）单独配色。
+  var FS = [
+    '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+    'precision highp float;',
+    '#else',
+    'precision mediump float;',
+    '#endif',
+    'varying vec3 vModel;',                       // 模型空间方向：贴图与经纬网只认它（地球才跟着转）
+    'varying vec3 vView;',                        // 相机空间方向：只用于明暗（朝相机的面亮）
+    'uniform sampler2D uTex;',
+    'uniform float uShowMer;',
+    'uniform float uShowPar;',
+    'uniform float uStep;',
+    'uniform float uW;',
+    'const float PI = 3.14159265359;',
+    'const float D2R = 0.01745329252;',
+    'void main() {',
+    '  vec3 n = normalize(vModel);',
+    '  float lat = asin(clamp(n.y, -1.0, 1.0)) / D2R;',
+    '  float a2 = atan(-n.z, n.x);',                // 与 dirOf 同一套约定：东经为正
+    '  float lon = a2 / D2R;',
+    '  float u = 0.5 + a2 / (2.0 * PI);',
+    '  float v = 0.5 - asin(clamp(n.y, -1.0, 1.0)) / PI;',
+    '  vec3 col = texture2D(uTex, vec2(u, v)).rgb;',
+    '  float shade = 0.78 + 0.22 * clamp(normalize(vView).z, 0.0, 1.0);',   // 边缘轻微变暗，有球感
+    '  col *= shade;',
+    '  float w = uW;',
+    '  float cl = max(cos(lat * D2R), 0.06);',
+    '  float ga = 0.0;',
+    '  if (uShowPar > 0.5) {',
+    '    float d = abs(lat - uStep * floor(lat / uStep + 0.5));',
+    '    ga = max(ga, 1.0 - smoothstep(w * 0.55, w * 1.45, d));',
+    '  }',
+    '  if (uShowMer > 0.5) {',
+    '    float d = abs(lon - uStep * floor(lon / uStep + 0.5)) * cl;',
+    '    ga = max(ga, 1.0 - smoothstep(w * 0.55, w * 1.45, d));',
+    '  }',
+    '  col = mix(col, vec3(1.0), ga * 0.42);',
+    '  float sa = 0.0; vec3 sc = vec3(1.0);',
+    '  if (uShowPar > 0.5) {',
+    '    float m = 1.0 - smoothstep(w * 1.15, w * 2.1, abs(lat));',
+    '    if (m > sa) { sa = m; sc = vec3(1.0, 0.16, 0.16); }',
+    '  }',
+    '  if (uShowMer > 0.5) {',
+    '    float m1 = 1.0 - smoothstep(w * 1.15, w * 2.1, abs(lon) * cl);',
+    '    if (m1 > sa) { sa = m1; sc = vec3(1.0, 0.92, 0.25); }',
+    '    float m2 = 1.0 - smoothstep(w * 1.15, w * 2.1, min(abs(lon + 20.0), abs(lon - 160.0)) * cl);',
+    '    if (m2 > sa) { sa = m2; sc = vec3(1.0, 0.25, 1.0); }',
+    '  }',
+    '  float dash = step(0.42, fract(lon / 7.0));',
+    '  if (uShowPar > 0.5) {',
+    '    float mt = (1.0 - smoothstep(w * 1.15, w * 2.1, abs(abs(lat) - 23.5))) * dash;',
+    '    if (mt > sa) { sa = mt; sc = vec3(0.25, 1.0, 0.35); }',
+    '    float mp = (1.0 - smoothstep(w * 1.15, w * 2.1, abs(abs(lat) - 66.5))) * dash;',
+    '    if (mp > sa) { sa = mp; sc = vec3(0.35, 1.0, 1.0); }',
+    '  }',
+    '  col = mix(col, sc, sa * 0.95);',
+    '  gl_FragColor = vec4(col, 1.0);',
+    '}'
+  ].join('\n');
+
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      throw new Error('shader: ' + gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+
+  function buildSphere(segU, segV) {
+    var pos = [], idx = [];
+    for (var j = 0; j <= segV; j++) {
+      var phi = (j / segV) * Math.PI;              // 0（北极）→ π（南极）
+      var y = Math.cos(phi), r = Math.sin(phi);
+      for (var i = 0; i <= segU; i++) {
+        var th = (i / segU) * 2 * Math.PI;
+        pos.push(r * Math.cos(th), y, -r * Math.sin(th));   // z 取负：与 dirOf 同一套右手系
+      }
+    }
+    for (var jj = 0; jj < segV; jj++) {
+      for (var ii = 0; ii < segU; ii++) {
+        var a = jj * (segU + 1) + ii, b = a + 1, c = a + segU + 1, d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
+    }
+    indexCount = idx.length;
+    vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.STATIC_DRAW);
+    ibo = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  }
+
+  function initGL() {
+    var o = { antialias: true, alpha: false, depth: true, preserveDrawingBuffer: true };
+    gl = canvas.getContext('webgl', o) || canvas.getContext('experimental-webgl', o);
+    if (!gl) throw new Error('no-webgl');
+
+    var p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, VS));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('link: ' + gl.getProgramInfoLog(p));
+    prog = p;
+    gl.useProgram(p);
+    ['uMVP', 'uRot', 'uTex', 'uShowMer', 'uShowPar', 'uStep', 'uW'].forEach(function (n) {
+      uniforms[n] = gl.getUniformLocation(p, n);
+    });
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+    buildSphere(128, 64);
+
+    // 纹理：用离屏画布把 5400×2700 的底图缩到设备上限之内（默认 4096×2048），省显存、加载快
+    var maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
+    var tw = Math.min(4096, maxTex), th = tw / 2;
+    var cv = document.createElement('canvas');
+    cv.width = tw; cv.height = th;
+    cv.getContext('2d').drawImage(texImg, 0, 0, tw, th);
+    tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    if (gl.generateMipmap) gl.generateMipmap(gl.TEXTURE_2D);
+    gl.uniform1i(uniforms.uTex, 0);
+  }
+
+  function resizeCanvas() {
+    var r = stage.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cssW = r.width; cssH = r.height;
+    var w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w; canvas.height = h;
+    }
+    if (gl) gl.viewport(0, 0, w, h);
+    dirty = true;
+  }
+
+  /* ============================================================
+   *  五、投影 / 反投影
+   * ============================================================ */
+  function tanX() { return Math.tan(FOV / 2) * (cssW / Math.max(cssH, 1)); }
+  function tanY() { return Math.tan(FOV / 2); }
+
+  // 世界坐标（已旋转）→ 屏幕像素
+  function worldToScreen(w) {
+    var depth = cam.dist - w[2];
+    if (depth <= 1e-4) return null;
+    var nx = w[0] / (depth * tanX()), ny = w[1] / (depth * tanY());
+    return { x: (nx * 0.5 + 0.5) * cssW, y: (0.5 - ny * 0.5) * cssH, z: w[2] };
+  }
+  // 模型空间方向 → 屏幕像素（含是否朝向相机）
+  function projectDir(d, R) {
+    var s = worldToScreen(rot3(R, d));
+    if (!s) return null;
+    s.visible = s.z > 1 / cam.dist;                // 单位球上该点是否在正面
+    return s;
+  }
+  // 屏幕像素 → 模型空间经纬度（射线与单位球求交）
+  function screenToLatLon(px, py) {
+    var dx = (2 * px / cssW - 1) * tanX();
+    var dy = (1 - 2 * py / cssH) * tanY();
+    var dz = -1;
+    var L = Math.sqrt(dx * dx + dy * dy + 1);
+    dx /= L; dy /= L; dz /= L;
+    var oz = cam.dist;
+    var b = 2 * (oz * dz), c = oz * oz - 1;
+    var disc = b * b - 4 * c;
+    if (disc < 0) return null;
+    var t = (-b - Math.sqrt(disc)) / 2;
+    if (t < 1e-4) return null;
+    var hx = t * dx, hy = t * dy, hz = oz + t * dz;
+    var m = rot3(Rinv, [hx, hy, hz]);
+    var n = Math.sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]) || 1;
+    return {
+      lat: Math.asin(Math.max(-1, Math.min(1, m[1] / n))) * R2D,
+      lon: Math.atan2(-m[2], m[0]) * R2D            // 与 dirOf 互逆（东经为正）
+    };
+  }
+  // 半径（像素）= 球体轮廓的视半径
+  function sphereRadiusPx() {
+    var ang = Math.asin(Math.min(1, 1 / cam.dist));
+    return Math.tan(ang) / tanY() * cssH * 0.5;
+  }
+
+  /* ============================================================
+   *  六、渲染一帧
+   * ============================================================ */
+  var offTexCache = {};
+  function render() {
+    if (!gl || !cssW || !cssH) return;
+    R3 = viewRotation(cam.lat, cam.lon);
+    Rinv = transpose3(R3);
+
+    if (mode === '3d') {
+      var aspect = cssW / cssH;
+      var P = perspective(FOV, aspect, 0.01, 100);
+      var V = lookAtZ(cam.dist);
+      var R4 = new Float32Array(16);
+      R4[0] = R3[0]; R4[1] = R3[3]; R4[2] = R3[6];
+      R4[4] = R3[1]; R4[5] = R3[4]; R4[6] = R3[7];
+      R4[8] = R3[2]; R4[9] = R3[5]; R4[10] = R3[8]; R4[15] = 1;
+      var MVP = mul4(P, mul4(V, R4));
+      // mat3：列主序
+      var R3col = new Float32Array([R3[0], R3[3], R3[6], R3[1], R3[4], R3[7], R3[2], R3[5], R3[8]]);
+
+      rimPx = sphereRadiusPx();
+      var wDeg = Math.max(0.055, Math.min(0.9, 80 / Math.max(rimPx, 40)));
+
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.useProgram(prog);
+      gl.uniformMatrix4fv(uniforms.uMVP, false, MVP);
+      gl.uniformMatrix3fv(uniforms.uRot, false, R3col);
+      gl.uniform1f(uniforms.uShowMer, opts.meridians ? 1 : 0);
+      gl.uniform1f(uniforms.uShowPar, opts.parallels ? 1 : 0);
+      gl.uniform1f(uniforms.uStep, opts.step);
+      gl.uniform1f(uniforms.uW, wDeg);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+
+      var loc = gl.getAttribLocation(prog, 'aPos');
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+      gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_SHORT, 0);
+
+      drawNameLabels(geoLabels3D, projectDir, R3);
+      drawRimLabels();
+      drawAxis();
+      drawMarker3D();
+    }
+    dirty = false;
+  }
+
+  /* ---------- 地名的 DOM 层（复用于 3D / 2D） ---------- */
+  function makeLabelEl(p) {
+    var el = document.createElement('div');
+    el.className = 'geo-label' + (p.k === 'ocean' ? ' ocean' : '');
+    el.textContent = p.t;
+    return el;
+  }
+  function drawNameLabels(layer, project, R) {
+    if (layer.childElementCount !== PLACES.length) {
+      layer.textContent = '';
+      PLACES.forEach(function (p) { layer.appendChild(makeLabelEl(p)); });
+    }
+    for (var i = 0; i < PLACES.length; i++) {
+      var p = PLACES[i], el = layer.children[i];
+      var s = project(dirOf(p.lat, p.lon), R);
+      if (!s || !s.visible) { el.style.display = 'none'; continue; }
+      el.style.display = '';
+      el.style.left = s.x.toFixed(1) + 'px';
+      el.style.top = s.y.toFixed(1) + 'px';
+    }
+  }
+
+  /* ---------- 边缘刻度（贴着地球轮廓） ---------- */
+  function latValues() {
+    var out = [0], s = opts.step;
+    for (var v = s; v <= 90; v += s) { out.push(v); out.push(-v); }
+    if (v - s < 90 && 90 % s !== 0) { }            // 极点由轴标签表示，不重复
+    SPECIAL_LAT.forEach(function (v) { if (out.indexOf(v) < 0) out.push(v); });
+    return out.filter(function (v) { return v >= -90 && v <= 90; });
+  }
+  function lonValues() {
+    var out = [], s = opts.step;
+    for (var v = -180; v < 180; v += s) out.push(v);
+    SPECIAL_LON.forEach(function (v) { if (out.indexOf(v) < 0) out.push(v); });
+    return out;
+  }
+  function padDeg(v, isLat) {
+    var a = Math.abs(v);
+    var n = (Math.abs(a - Math.round(a)) < 0.05) ? String(Math.abs(Math.round(a))) : a.toFixed(1);
+    if (Math.abs(v) < 0.05) return '0°';
+    return n + '°' + (isLat ? (v > 0 ? 'N' : 'S') : (v > 0 ? 'E' : 'W'));
+  }
+  function isSpecialDeg(v, list) {
+    for (var i = 0; i < list.length; i++) if (Math.abs(v - list[i]) < 0.05) return true;
+    return false;
+  }
+  // 在球面上找某条纬线 / 经线与轮廓的交点（= 屏幕上离圆心最远的那个点）
+  function rimCrossing(isLat, value, sideFn) {
+    var best = null;
+    for (var t = 0; t < 360; t += 2) {
+      var d = isLat ? dirOf(value, t) : dirOf(-90 + t / 2, value);
+      var s = projectDir(d, R3);
+      if (!s || !sideFn(s)) continue;
+      var r = Math.hypot(s.x - cssW / 2, s.y - cssH / 2);
+      if (!best || r > best.r) best = { x: s.x, y: s.y, r: r };
+    }
+    return best;
+  }
+  function drawRimLabels() {
+    if (mode !== '3d') return;
+    var cx = cssW / 2, cy = cssH / 2, R = rimPx + 13;
+    var wanted = [], i, v, c;
+    // 纬线刻度：靠左半边的那一个交点（读起来像刻度尺）
+    latValues().forEach(function (v) {
+      var pt = rimCrossing(true, v, function (s) { return s.x <= cx + 0.5; });
+      if (pt) wanted.push({ text: padDeg(v, true), x: pt.x, y: pt.y, sp: isSpecialDeg(v, SPECIAL_LAT) || v === 0, or: 'lat' });
+    });
+    // 经线刻度：取下半边的交点
+    lonValues().forEach(function (v) {
+      var pt = rimCrossing(false, v, function (s) { return s.y >= cy - 0.5; });
+      if (pt) wanted.push({ text: padDeg(v, false), x: pt.x, y: pt.y, sp: isSpecialDeg(v, SPECIAL_LON) || v === 0, or: 'lon' });
+    });
+    // 推到轮廓外侧 + 去重叠（按数值顺序，保证旋转时稳定）
+    var placed = [];
+    wanted.forEach(function (w) {
+      var dx = w.x - cx, dy = w.y - cy, L = Math.hypot(dx, dy) || 1;
+      var x = cx + dx / L * R, y = cy + dy / L * R;
+      for (var k = 0; k < placed.length; k++) {
+        if (Math.hypot(placed[k].x - x, placed[k].y - y) < 21) return;
+      }
+      placed.push({ x: x, y: y, text: w.text, sp: w.sp });
+    });
+    var layer = rimLabels3D;
+    while (layer.childElementCount > placed.length) layer.removeChild(layer.lastChild);
+    while (layer.childElementCount < placed.length) {
+      var el = document.createElement('div');
+      el.className = 'rim-label';
+      layer.appendChild(el);
+    }
+    placed.forEach(function (p, k) {
+      var el = layer.children[k];
+      el.textContent = p.text;
+      el.className = 'rim-label' + (p.sp ? ' special' : '');
+      el.style.left = p.x.toFixed(1) + 'px';
+      el.style.top = p.y.toFixed(1) + 'px';
+    });
+  }
+
+  /* ---------- 地轴（倾斜 23.5° 的可视化） ---------- */
+  function drawAxis() {
+    var axis = rot3(R3, [0, 1, 0]);                // 模型北极方向 → 世界
+    var ext = 1.42 * Math.max(1, cam.dist * 0.42);
+    var n = worldToScreen([axis[0] * ext, axis[1] * ext, axis[2] * ext]);
+    var s = worldToScreen([-axis[0] * ext, -axis[1] * ext, -axis[2] * ext]);
+    if (!n || !s) { axisLine.style.opacity = 0; axisHalo.style.opacity = 0; axisN.style.display = 'none'; axisS.style.display = 'none'; return; }
+    [[axisLine, n, s], [axisHalo, n, s]].forEach(function (it) {
+      it[0].setAttribute('x1', it[1].x.toFixed(1)); it[0].setAttribute('y1', it[1].y.toFixed(1));
+      it[0].setAttribute('x2', it[2].x.toFixed(1)); it[0].setAttribute('y2', it[2].y.toFixed(1));
+      it[0].style.opacity = '';
+    });
+    // 只画露在球体外面的那截更真实：内段压暗
+    var d = Math.hypot(n.x - s.x, n.y - s.y);
+    axisLine.setAttribute('stroke-dasharray', '');
+    axisN.style.display = ''; axisS.style.display = '';
+    axisN.setAttribute('x', n.x.toFixed(1)); axisN.setAttribute('y', (n.y - 9).toFixed(1));
+    axisS.setAttribute('x', s.x.toFixed(1)); axisS.setAttribute('y', (s.y + 16).toFixed(1));
+    if (d < 1) { axisLine.style.opacity = 0; axisN.style.display = 'none'; axisS.style.display = 'none'; }
+  }
+
+  function drawMarker3D() {
+    if (!marker) { marker3D.style.display = 'none'; return; }
+    var s = projectDir(dirOf(marker.lat, marker.lon), R3);
+    if (!s || !s.visible) { marker3D.style.display = 'none'; return; }
+    marker3D.style.display = 'block';
+    marker3D.style.left = s.x.toFixed(1) + 'px';
+    marker3D.style.top = s.y.toFixed(1) + 'px';
+  }
+
+  /* ============================================================
+   *  七、2D 平面地图
+   * ============================================================ */
+  var mapWrap = document.getElementById('map2d');
+  var mapSvg = document.getElementById('map-svg');
+  var labels2D = document.getElementById('labels-2d-layer');
+  var latBox = document.getElementById('map-lat-labels');
+  var lonBox = document.getElementById('map-lon-labels');
+  var marker2D = document.getElementById('marker-2d');
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  function mkLine(x1, y1, x2, y2, color, width, dash) {
+    var l = document.createElementNS(SVGNS, 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+    l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    l.setAttribute('stroke', color);
+    l.setAttribute('stroke-width', width);
+    l.setAttribute('vector-effect', 'non-scaling-stroke');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    return l;
+  }
+  function build2D() {
+    mapSvg.textContent = '';
+    var i, v;
+    // 普通经纬网
+    for (v = -180 + opts.step; v < 180; v += opts.step) {
+      mapSvg.appendChild(mkLine(v + 180, 0, v + 180, 180, 'rgba(255,255,255,.22)', 1));
+    }
+    for (i = 0; i <= 180; i += opts.step) {
+      mapSvg.appendChild(mkLine(0, i, 360, i, 'rgba(255,255,255,.22)', 1));
+    }
+    // 特殊线
+    mapSvg.appendChild(mkLine(0, 90, 360, 90, '#ff2929', 1.8));
+    mapSvg.appendChild(mkLine(180, 0, 180, 180, '#ffeb40', 1.8));
+    SPECIAL_LON.forEach(function (lo) {
+      mapSvg.appendChild(mkLine(lo + 180, 0, lo + 180, 180, '#ff40ff', 1.8));
+    });
+    SPECIAL_LAT.forEach(function (la) {
+      mapSvg.appendChild(mkLine(0, 90 - la, 360, 90 - la, la > 0 ? '#40ff59' : '#40ff59', 1.8, '7 5'));
+    });
+    mapSvg.appendChild(mkLine(0, 0, 360, 0, 'rgba(255,255,255,.3)', 1));
+    mapSvg.appendChild(mkLine(0, 180, 360, 180, 'rgba(255,255,255,.3)', 1));
+
+    // 地名
+    labels2D.textContent = '';
+    PLACES.forEach(function (p) {
+      var el = makeLabelEl(p);
+      el.style.left = ((p.lon + 180) / 360 * 100).toFixed(3) + '%';
+      el.style.top = ((90 - p.lat) / 180 * 100).toFixed(3) + '%';
+      el.style.fontSize = '11px';
+      labels2D.appendChild(el);
+    });
+    // 边缘刻度
+    latBox.textContent = ''; lonBox.textContent = '';
+    latValues().forEach(function (v) {
+      var el = document.createElement('div');
+      el.className = 'map-edge';
+      el.textContent = padDeg(v, true);
+      el.style.top = ((90 - v) / 180 * 100).toFixed(3) + '%';
+      latBox.appendChild(el);
+    });
+    lonValues().forEach(function (v) {
+      if (v === -180) return;
+      var el = document.createElement('div');
+      el.className = 'map-edge';
+      el.textContent = padDeg(v, false);
+      el.style.left = ((v + 180) / 360 * 100).toFixed(3) + '%';
+      lonBox.appendChild(el);
+    });
+    document.getElementById('lg-step').textContent = opts.step;
+
+    // 大洲大洋名称开关
+    if (opts.names) {
+      labels2D.classList.remove('hidden-labels');
+      geoLabels3D.classList.remove('hidden-labels');
+    } else {
+      labels2D.classList.add('hidden-labels');
+      geoLabels3D.classList.add('hidden-labels');
+    }
+  }
+
+  /* ============================================================
+   *  八、坐标面板 + 刮一刮
+   * ============================================================ */
+  var resultEl = document.getElementById('coordinate-result');
+  var scratch = document.getElementById('scratch-canvas');
+  var sctx = scratch.getContext('2d');
+  var scratchMode = false;
+
+  function fmtLat(v) { return (v >= 0 ? '北纬 ' : '南纬 ') + Math.abs(v).toFixed(2) + '°'; }
+  function fmtLon(v) { return (v >= 0 ? '东经 ' : '西经 ') + Math.abs(v).toFixed(2) + '°'; }
+
+  function showResult(lat, lon) {
+    resultEl.innerHTML =
+      '<div class="r-row"><span class="r-key">经度</span><span class="r-val">' + fmtLon(lon) + '</span></div>' +
+      '<div class="r-row"><span class="r-key">纬度</span><span class="r-val">' + fmtLat(lat) + '</span></div>' +
+      '<div class="r-sub">' + Math.abs(lat).toFixed(2) + '°' + (lat >= 0 ? 'N' : 'S') + '，' +
+      Math.abs(lon).toFixed(2) + '°' + (lon >= 0 ? 'E' : 'W') + '</div>' +
+      '<div class="r-tags"><span>' + (lat >= 0 ? '北半球' : '南半球') + '</span>' +
+      '<span>' + (lon >= 0 ? '东半球' : '西半球') + '</span>' +
+      (Math.abs(lat) < 23.5 ? '<span>热带</span>' : Math.abs(lat) < 66.5 ? '<span>温带</span>' : '<span>寒带</span>') +
+      '</div>';
+    if (scratchMode) coverScratch();
+  }
+
+  function coverScratch() {
+    var w = Math.max(1, Math.round(scratch.clientWidth * dpr));
+    var h = Math.max(1, Math.round(scratch.clientHeight * dpr));
+    if (scratch.width !== w || scratch.height !== h) { scratch.width = w; scratch.height = h; }
+    var g = sctx.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, '#22304a'); g.addColorStop(.5, '#1a2740'); g.addColorStop(1, '#22304a');
+    sctx.globalCompositeOperation = 'source-over';
+    sctx.fillStyle = g;
+    sctx.fillRect(0, 0, w, h);
+    // 斜纹 + 提示
+    sctx.strokeStyle = 'rgba(140,180,230,.14)';
+    sctx.lineWidth = 1 * dpr;
+    for (var x = -h; x < w; x += 14 * dpr) {
+      sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x + h, h); sctx.stroke();
+    }
+    sctx.fillStyle = 'rgba(200,222,250,.85)';
+    sctx.font = (13 * dpr) + 'px "PingFang SC","Microsoft YaHei",system-ui,sans-serif';
+    sctx.textAlign = 'center'; sctx.textBaseline = 'middle';
+    sctx.fillText('刮一刮 · 看答案', w / 2, h / 2 - 4 * dpr);
+    sctx.fillStyle = 'rgba(160,190,225,.7)';
+    sctx.font = (11 * dpr) + 'px "PingFang SC","Microsoft YaHei",system-ui,sans-serif';
+    sctx.fillText('按住并滑动', w / 2, h / 2 + 16 * dpr);
+  }
+
+  var scratching = false;
+  function scratchAt(ev) {
+    var r = scratch.getBoundingClientRect();
+    var x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
+    sctx.globalCompositeOperation = 'destination-out';
+    sctx.lineWidth = 26 * dpr; sctx.lineCap = 'round'; sctx.lineJoin = 'round';
+    sctx.beginPath();
+    sctx.moveTo(scratch._lx == null ? x : scratch._lx, scratch._ly == null ? y : scratch._ly);
+    sctx.lineTo(x, y); sctx.stroke();
+    sctx.beginPath(); sctx.arc(x, y, 13 * dpr, 0, 6.2832); sctx.fill();
+    scratch._lx = x; scratch._ly = y;
+  }
+  scratch.addEventListener('pointerdown', function (e) {
+    scratching = true; scratch._lx = null; scratch._ly = null;
+    scratch.setPointerCapture(e.pointerId); scratchAt(e); e.preventDefault();
+  });
+  scratch.addEventListener('pointermove', function (e) { if (scratching) { scratchAt(e); e.preventDefault(); } });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
+    scratch.addEventListener(t, function () { scratching = false; scratch._lx = null; });
+  });
+
+  function setAnswerMode(m) {
+    scratchMode = (m === 'scratch');
+    document.body.classList.toggle('scratch', scratchMode);
+    Array.prototype.forEach.call(document.querySelectorAll('#dock .dk-btn[data-mode]'), function (b) {
+      b.classList.toggle('on', b.getAttribute('data-mode') === m);
+    });
+    if (scratchMode) { coverScratch(); } else { resultEl.style.visibility = ''; }
+  }
+
+  /* ============================================================
+   *  九、点读（3D + 2D 共用）
+   * ============================================================ */
+  function query(lat, lon) {
+    marker = { lat: lat, lon: lon };
+    showResult(lat, lon);
+    if (mode === '2d') {
+      marker2D.style.display = 'block';
+      marker2D.style.left = ((lon + 180) / 360 * 100).toFixed(3) + '%';
+      marker2D.style.top = ((90 - lat) / 180 * 100).toFixed(3) + '%';
+    }
+    dirty = true;
+  }
+
+  mapWrap.addEventListener('click', function (e) {
+    var r = mapWrap.getBoundingClientRect();
+    var x = Math.min(Math.max(e.clientX - r.left, 0), r.width);
+    var y = Math.min(Math.max(e.clientY - r.top, 0), r.height);
+    query(90 - y / r.height * 180, x / r.width * 360 - 180);
+  });
+
+  /* ============================================================
+   *  十、交互：拖动旋转 / 缩放
+   * ============================================================ */
+  var pointers = new Map();
+  var drag = null;
+  function clampLat(v) { return Math.max(-90, Math.min(90, v)); }
+
+  glWrap.addEventListener('pointerdown', function (e) {
+    glWrap.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      drag = { x: e.clientX, y: e.clientY, moved: 0, t: Date.now() };
+      glWrap.classList.add('dragging');
+    }
+    e.preventDefault();
+  });
+  glWrap.addEventListener('pointermove', function (e) {
+    if (!pointers.has(e.pointerId)) return;
+    var prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1 && drag) {
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      drag.x = e.clientX; drag.y = e.clientY;
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      rotateBy(dx, dy);
+    } else if (pointers.size === 2) {
+      var it = pointers.values(), a = it.next().value, b = it.next().value;
+      var d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchPrev) zoomBy(Math.pow(pinchPrev / d, 0.9));
+      pinchPrev = d;
+    }
+    e.preventDefault();
+  });
+  var pinchPrev = 0;
+  function endPointer(e) {
+    if (pointers.has(e.pointerId)) pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchPrev = 0;
+    if (pointers.size === 0) {
+      glWrap.classList.remove('dragging');
+      // 轻点（没怎么拖动）= 点读
+      if (drag && drag.moved < 6) {
+        var r = canvas.getBoundingClientRect();
+        var p = screenToLatLon(e.clientX - r.left, e.clientY - r.top);
+        if (p) query(p.lat, p.lon);
+      }
+      drag = null;
+    }
+  }
+  ['pointerup', 'pointercancel'].forEach(function (t) { glWrap.addEventListener(t, endPointer); });
+
+  function rotateBy(dx, dy) {
+    var k = 0.26 * (2.75 / cam.dist);              // 放大时转得慢一点，手感一致
+    cam.lon = ((cam.lon - dx * k + 540) % 360) - 180;
+    cam.lat = clampLat(cam.lat + dy * k);
+    dirty = true;
+  }
+  function zoomBy(f) {
+    cam.dist = Math.max(1.28, Math.min(7.5, cam.dist / f));
+    dirty = true;
+  }
+  glWrap.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    zoomBy(Math.pow(1.0016, -e.deltaY));
+    cam.dist = Math.max(1.28, Math.min(7.5, cam.dist));
+    dirty = true;
+  }, { passive: false });
+
+  window.addEventListener('keydown', function (e) {
+    if (e.target && /input|select|textarea/i.test(e.target.tagName)) return;
+    var s = 4;
+    if (e.key === 'ArrowLeft') cam.lon = ((cam.lon + s + 540) % 360) - 180;
+    else if (e.key === 'ArrowRight') cam.lon = ((cam.lon - s + 540) % 360) - 180;
+    else if (e.key === 'ArrowUp') cam.lat = clampLat(cam.lat + s);
+    else if (e.key === 'ArrowDown') cam.lat = clampLat(cam.lat - s);
+    else if (e.key === '+' || e.key === '=') zoomBy(1.12);
+    else if (e.key === '-' || e.key === '_') zoomBy(1 / 1.12);
+    else return;
+    dirty = true; e.preventDefault();
+  });
+
+  /* ============================================================
+   *  十一、控件绑定
+   * ============================================================ */
+  function setMode(m) {
+    mode = m;
+    document.body.classList.toggle('mode-2d', m === '2d');
+    document.getElementById('btn-3d').classList.toggle('active', m === '3d');
+    document.getElementById('btn-2d').classList.toggle('active', m === '2d');
+    if (m === '2d') {
+      marker2D.style.display = marker ? 'block' : 'none';
+      if (marker) {
+        marker2D.style.left = ((marker.lon + 180) / 360 * 100).toFixed(3) + '%';
+        marker2D.style.top = ((90 - marker.lat) / 180 * 100).toFixed(3) + '%';
+      }
+      marker3D.style.display = 'none';
+    } else {
+      marker2D.style.display = 'none';
+      dirty = true;
+      resizeCanvas();
+    }
+  }
+  document.getElementById('btn-3d').addEventListener('click', function () { setMode('3d'); });
+  document.getElementById('btn-2d').addEventListener('click', function () { setMode('2d'); });
+
+  document.getElementById('panel-toggle').addEventListener('click', function () {
+    document.body.classList.add('panel-hidden');
+    setTimeout(resizeCanvas, 240);
+  });
+  document.getElementById('panel-show').addEventListener('click', function () {
+    document.body.classList.remove('panel-hidden');
+    setTimeout(resizeCanvas, 240);
+  });
+  document.getElementById('legend-toggle').addEventListener('click', function () {
+    var hid = document.body.classList.toggle('legend-hidden');
+    this.textContent = hid ? '展开' : '收起';
+  });
+
+  document.getElementById('tg-meridians').addEventListener('change', function () { opts.meridians = this.checked; dirty = true; });
+  document.getElementById('tg-parallels').addEventListener('change', function () { opts.parallels = this.checked; dirty = true; });
+  document.getElementById('tg-labels').addEventListener('change', function () { opts.names = this.checked; build2D(); dirty = true; });
+  document.getElementById('grid-step').addEventListener('change', function () {
+    opts.step = Number(this.value); build2D(); dirty = true;
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.seg button[data-view]'), function (b) {
+    b.addEventListener('click', function () {
+      var v = b.getAttribute('data-view');
+      if (v === 'globe') { cam.lat = 12; cam.lon = -30; cam.dist = 2.75; }
+      else if (v === 'north') { cam.lat = 89.5; cam.lon = -30; cam.dist = 2.6; }
+      else { cam.lat = -89.5; cam.lon = -30; cam.dist = 2.6; }
+      Array.prototype.forEach.call(document.querySelectorAll('.seg button[data-view]'), function (o) { o.classList.remove('on'); });
+      b.classList.add('on');
+      dirty = true;
+    });
+  });
+  document.getElementById('reset-view').addEventListener('click', function () {
+    cam.lat = 12; cam.lon = -30; cam.dist = 2.75;
+    document.querySelector('.seg button[data-view="globe"]').click();
+  });
+
+  var spinBtn = document.getElementById('spin-toggle');
+  spinBtn.addEventListener('click', function () {
+    opts.spin = !opts.spin;
+    spinBtn.textContent = opts.spin ? '⏸ 暂停自转' : '▶ 播放自转';
+    spinBtn.classList.toggle('primary', !opts.spin);
+    dirty = true;
+  });
+  document.getElementById('spin-speed').addEventListener('input', function () {
+    opts.speed = Number(this.value);
+    document.getElementById('spin-val').textContent = opts.speed + '°/秒';
+  });
+
+  document.getElementById('fullscreen-btn').addEventListener('click', function () {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen || function () {}).call(document.documentElement);
+  });
+  document.addEventListener('fullscreenchange', function () {
+    document.getElementById('fullscreen-btn').textContent = document.fullscreenElement ? '⛶ 退出全屏' : '⛶ 全屏';
+    setTimeout(resizeCanvas, 120);
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('#dock .dk-btn[data-mode]'), function (b) {
+    b.addEventListener('click', function () { setAnswerMode(b.getAttribute('data-mode')); });
+  });
+  document.getElementById('scratch-reset').addEventListener('click', function () {
+    if (!scratchMode) setAnswerMode('scratch'); else coverScratch();
+  });
+
+  /* ============================================================
+   *  十二、主循环 / 启动
+   * ============================================================ */
+  var last = 0;
+  function loop(ts) {
+    var dt = last ? Math.min((ts - last) / 1000, 0.1) : 0;
+    last = ts;
+    if (opts.spin && mode === '3d' && dt > 0) {
+      // 自转 = 地球自西向东转 → 视点经度递减 → 地面景物向右移（与拖动方向一致）
+      cam.lon = ((cam.lon - opts.speed * dt + 540) % 360) - 180;
+      dirty = true;
+    }
+    if (dirty) render();
+    requestAnimationFrame(loop);
+  }
+
+  function fatal(msg) {
+    var f = document.getElementById('fatal');
+    f.style.display = 'flex';
+    f.innerHTML = '<div><div style="font-size:18px;font-weight:600;margin-bottom:8px">地球仪无法启动</div>' +
+      '<div style="color:#c8a0a0;font-size:13px">' + msg + '</div></div>';
+  }
+
+  function start() {
+    texImg.src = TEX_URL;
+    texImg.onload = function () {
+      try {
+        initGL();
+        resizeCanvas();
+        build2D();
+        render();
+        document.getElementById('loading').classList.add('done');
+      } catch (err) {
+        fatal(String(err && err.message || err).indexOf('no-webgl') >= 0
+          ? '当前浏览器/环境不支持 WebGL，无法显示 3D 地球仪（可切到 2D 平面地图模式）。'
+          : '初始化失败：' + (err && err.message ? err.message : err));
+        // 即使 3D 失败，2D 平面地图仍可用
+        build2D();
+        document.getElementById('loading').classList.add('done');
+      }
+    };
+    texImg.onerror = function () {
+      fatal('地球贴图加载失败（textures/blue-marble-5400x2700.jpg），2D 平面地图也无法显示。');
+      document.getElementById('loading').classList.add('done');
+    };
+  }
+
+  window.addEventListener('resize', function () { resizeCanvas(); if (scratchMode) coverScratch(); });
+  if (window.ResizeObserver) new ResizeObserver(function () { resizeCanvas(); if (scratchMode) coverScratch(); }).observe(stage);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) dirty = true; });
+
+  start();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

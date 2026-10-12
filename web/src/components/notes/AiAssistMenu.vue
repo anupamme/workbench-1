@@ -27,6 +27,9 @@
     <div v-if="phase === 'preview'" class="modal-backdrop" @click.self="phase = 'ask'">
       <div class="modal" style="width:min(720px,94vw);max-height:86vh;overflow-y:auto">
         <h3>脱敏对照表 <span class="muted" style="font-weight:400;font-size:12.5px">{{ mapping.length }} 项 · AI 只看到右列代码</span></h3>
+        <div v-if="cur === 'translate' && detected" class="muted small" style="margin-bottom:10px">
+          识别为{{ langLabel(detected) }}，将译成<b>简体中文</b>（代码块与专有名词不翻）。
+        </div>
         <div v-if="err" class="msg err">{{ err }}</div>
         <template v-else>
           <div v-if="disabled" class="muted">
@@ -58,9 +61,12 @@
     <!-- 第三步：结果（原行为不变） -->
     <div v-if="phase === 'result'" class="modal-backdrop" @click.self="close">
       <div class="modal" style="width:min(720px,94vw); max-height:86vh; overflow-y:auto">
-        <h3>AI {{ labelOf(cur) }}<span v-if="masked" class="badge green" style="margin-left:8px">已脱敏还原</span></h3>
+        <h3>AI {{ labelOf(cur) }}<span v-if="masked" class="badge green" style="margin-left:8px">已脱敏还原</span><span v-if="cur === 'translate' && detected && detected !== 'zh'" class="badge blue" style="margin-left:8px">识别为{{ langLabel(detected) }}</span></h3>
         <div v-if="err" class="msg err">{{ err }}</div>
-        <div v-else class="markdown-body" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--bg3)"
+        <div v-else-if="truncated" class="msg warn" style="margin-bottom:8px">
+          译文到了长度上限，可能没译完——选中剩下那部分再点一次「译成中文」即可接着译。
+        </div>
+        <div v-if="!err" class="markdown-body" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--bg3)"
              v-html="rendered" />
         <div class="row" style="margin-top:12px; justify-content:flex-end; gap:6px">
           <span class="muted small" style="margin-right:auto">{{ model }}<template v-if="usage"> · {{ usage.total_tokens || 0 }} tokens</template></span>
@@ -75,7 +81,7 @@
 </template>
 
 <script setup>
-// AI 辅助写作（v1.9.41 插件之一）：总结 / 续写 / 翻译。
+// AI 辅助写作（v1.9.41 插件之一）：总结 / 续写 / 译成中文。
 // 结果**不落库**，由使用者决定插入还是替换 —— AI 直接改正文是很容易让人丢稿的设计。
 //
 // v1.13.0：点按钮先弹「发送前确认」——可选「直接发送」或「先脱敏再发送」。选了脱敏就走
@@ -97,9 +103,12 @@ const emit = defineEmits(['insert-text', 'replace-text']);
 const ACTIONS = [
   { k: 'summarize', t: 'AI 总结', title: '总结这篇笔记的要点（150 字内）' },
   { k: 'continue', t: '续写', title: '顺着正文往下写' },
-  { k: 'translate', t: '翻译', title: '翻译成英文（有选中就只翻选中的）' },
+  { k: 'translate', t: '译成中文', title: '译成中文（英文 / 日文 / 韩文… 都译；有选中就只译选中的）' },
 ];
 const labelOf = (k) => (ACTIONS.find((a) => a.k === k) || {}).t || '';
+// 服务端 detectLang 的返回值 → 界面说法（v1.13.15：翻译一律译成中文，并如实报出识别到的语种）
+const LANG_LABEL = { zh: '中文', en: '英文', ja: '日文', ko: '韩文', ru: '俄文', ar: '阿拉伯文', other: '外文', unknown: '语言未识别' };
+const langLabel = (k) => LANG_LABEL[k] || '外文';
 const typeLabel = (k) => ({ org: '公司', person: '人名', dept: '部门', group: '群名', acct: '账号', pwd: '密码', apikey: 'KEY', email: '邮箱', phone: '手机', idcard: '身份证', custom: '自定义', numbers: '数值' }[k] || k);
 
 const phase = ref('');         // '' | ask | preview | result
@@ -113,6 +122,8 @@ const masked = ref(false);
 const sessionId = ref(0);
 const mapping = ref([]);
 const maskedPreview = ref('');
+const truncated = ref(false);  // 译文被 max_tokens 截断（服务端 finish_reason=length）
+const detected = ref('');      // 服务端识别到的源语言（zh/en/ja/ko/ru/ar/other/unknown）
 const disabled = ref(false);   // 总开关关着（服务端如实回报，不当成「没识别到」糊过去）
 const rendered = computed(() => renderMarkdown(result.value || '', { wikiStyle: 'plain' }));
 
@@ -130,7 +141,7 @@ function start(action) {
   if (props.disabled || loading.value) return;
   cur.value = action;
   err.value = ''; result.value = ''; model.value = ''; usage.value = null;
-  masked.value = false; sessionId.value = 0; mapping.value = []; maskedPreview.value = ''; disabled.value = false;
+  masked.value = false; sessionId.value = 0; mapping.value = []; maskedPreview.value = ''; disabled.value = false; detected.value = ''; truncated.value = false;
   phase.value = 'ask';
 }
 function close() { if (!loading.value) phase.value = ''; }
@@ -145,6 +156,7 @@ async function preview() {
     maskedPreview.value = r.masked_preview || '';
     sessionId.value = r.session_id || 0;
     disabled.value = !!r.disabled;
+    detected.value = r.detected || '';
     phase.value = 'preview';
   } catch (e) { err.value = e.message || '脱敏预演失败'; }
   finally { loading.value = false; }
@@ -161,6 +173,8 @@ async function send(useMask) {
     model.value = r.model || '';
     usage.value = r.usage || null;
     masked.value = !!r.masked;
+    truncated.value = !!r.truncated;
+    if (r.detected) detected.value = r.detected;   // 脱敏会话那条路后端不回 detected，保留预览时拿到的
     phase.value = 'result';
   } catch (e) {
     err.value = e.message || 'AI 调用失败';
