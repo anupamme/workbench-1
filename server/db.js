@@ -1480,6 +1480,25 @@ CREATE TABLE IF NOT EXISTS typing_imports (
   created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_typing_imports ON typing_imports(user_id, kind);
+-- 打字练习流水（v1.13.13）：一次「进入某个模式 → 离开」算一条，记下开始时间与打字项目（模式）。
+-- 与 typing_days **并存**：typing_days 是按天累加的结算口径（赚钱日历/兑现只认它），
+-- 这张表只管「打字记录」页的展示（日期时间 + 游戏/诗词/歌词/钢琴），别倒过来用它算钱。
+-- session_id 由前端每次进入模式时生成，20 秒心跳与切后台补报都带同一个 id → 一次练习只累加一行；
+-- 缓存里的旧前端不带这个字段，服务端回退成 day:YYYY-MM-DD（一天一行，与下面的一次性回填同 id）。
+CREATE TABLE IF NOT EXISTS typing_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  session_id TEXT NOT NULL,                   -- 前端生成的练习会话 id
+  day TEXT NOT NULL,                          -- YYYY-MM-DD（会话首次上报那天）
+  mode TEXT NOT NULL DEFAULT '',               -- game | poetry | lyrics | piano（历史回填行为空）
+  started_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  seconds INTEGER NOT NULL DEFAULT 0,
+  correct INTEGER NOT NULL DEFAULT 0,
+  wrong INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(user_id, session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_typing_logs ON typing_logs(user_id, day DESC, started_at DESC);
 
 -- ---------- 语音（MOSS-TTS-Nano） ----------
 -- 音色库（全局共享，主库）：一行一个「音色」。
@@ -2692,6 +2711,23 @@ migrateTestsIntoPrivate();
   db.prepare('UPDATE typing_payouts SET amount = -amount WHERE amount < 0').run();
   console.log(`[db] 迁移：typing_payouts 负数行翻正 ${rows.length} 行 —— ` + rows.map((r) =>
     `#${r.id} 用户${r.user_id} ${r.period} ${r.amount}→${-r.amount}（${String(r.note || '').slice(0, 24)}…）`).join('； '));
+})();
+
+// 一次性回填（v1.13.13）：打字记录页从「每天一行」改成「每次练习一行」（要显示日期时间与打字项目），
+// 而老数据只有按天累加、既没有时间也没有模式——不回填的话升级当天历史会整片消失，看着像丢数据。
+// 把 typing_days 里还没有对应流水的日子补成一行：session_id='day:YYYY-MM-DD'、mode 留空
+// （面板显示「历史记录」）、started_at 只写日期——**没有时间就不编时间**，前端只显示日期。
+// ⚠️ 只能跑主库：typing_days / typing_logs 都是主库专属表，租户库里没有。
+(function seedTypingLogsFromDays() {
+  if (getSetting(db, 'typing_logs_seed_v11313', false)) return;
+  setSetting(db, 'typing_logs_seed_v11313', true);
+  const r = db.prepare(
+    `INSERT INTO typing_logs(user_id, session_id, day, mode, started_at, updated_at, seconds, correct, wrong)
+     SELECT d.user_id, 'day:' || d.day, d.day, '', d.day, COALESCE(d.updated_at, d.day), d.seconds, d.correct, d.wrong
+     FROM typing_days d
+     WHERE NOT EXISTS (SELECT 1 FROM typing_logs l WHERE l.user_id = d.user_id AND l.session_id = 'day:' || d.day)`
+  ).run();
+  if (r.changes) console.log(`[db] 迁移：typing_days → typing_logs 回填 ${r.changes} 行（历史练习按天一行）`);
 })();
 
 // 家庭共享底账初始化（一次性，守卫 family_share_v1；函数定义在模块层，见文件尾）

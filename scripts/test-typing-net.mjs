@@ -56,6 +56,7 @@ try {
   process.exitCode = fail ? 1 : 0;
 } finally {
   db.prepare('DELETE FROM typing_days WHERE user_id=?').run(uid);
+  db.prepare('DELETE FROM typing_logs WHERE user_id=?').run(uid);   // v1.13.13 起 progress 会写流水表，别留孤儿行
   db.prepare('DELETE FROM sessions WHERE token=?').run(token);
   db.prepare('DELETE FROM users WHERE id=?').run(uid);
 }

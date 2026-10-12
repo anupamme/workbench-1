@@ -180,6 +180,13 @@ try {
   await p.waitForSelector('.po-table tbody tr', { timeout: 10000 });
   // 注意：按整卡文本过滤会命中「处罚标准」卡（说明里就写着「兑现记录」），必须按 h3 定位
   const recCard = p.locator('.po-card').filter({ has: p.locator('h3', { hasText: '兑现记录' }) }).first();
+  // 列表是 reload 后异步拉到的：`waitForSelector` 只保证「有行」，首行可能是先渲染出来的别的行
+  // （处罚记录随后才到）——不等它就会偶发假红（实测 4 次里挂 1 次）。
+  await p.waitForFunction(() => {
+    const card = [...document.querySelectorAll('.po-card')].find((c) => (c.querySelector('h3')?.textContent || '').includes('兑现记录'));
+    const tr = card && card.querySelector('tbody tr');
+    return !!tr && tr.textContent.includes('处罚');
+  }, null, { timeout: 10000 }).catch(() => {});
   const rowTxt = await recCard.locator('tbody tr').first().innerText();
   ok(rowTxt.includes('¥2.50') && !rowTxt.includes('-¥2.50') && rowTxt.includes('处罚'), '兑现记录首行显示 ¥2.50 + 「处罚」标记（不再有负号）');
   ok((await recCard.locator('.badge.wait').count()) === 1, '处罚行带 badge（区别于普通兑现）');

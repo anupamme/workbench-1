@@ -10,8 +10,12 @@ const router = express.Router();
 // 奖励费率存 settings 表：打字每打对 reward_chars 个字 = reward_yuan 元；
 // 视频教学每 video_reward_minutes 分钟学时 = video_reward_yuan 元（默认 60 分钟 1 元）；
 // 练琴每 piano_reward_hours 小时有效时长 = piano_reward_yuan 元（默认 1 小时 3 元）
+// ⚠️ 这里的键名必须是**短名**（reward_chars…）——loadRates 是 `out = {...默认}` 再 `out[short] = 库里的值`，
+// 前端、PayoutPanel、MoneyPanel 读的也都是短名。写成 DB 键名（typing_reward_chars…）时，
+// 全新库（settings 里还没存过费率）会算出 undefined 参与运算 → 金额全变 NaN → 接口回 null，
+// 页面显示「¥null」而不是默认费率（生产库存过费率所以一直没暴露）。
 const RATE_DEFAULTS = {
-  typing_reward_chars: 100, typing_reward_yuan: 2,
+  reward_chars: 100, reward_yuan: 2,
   video_reward_minutes: 60, video_reward_yuan: 1,
   piano_reward_hours: 1, piano_reward_yuan: 3,
 };
@@ -88,12 +92,24 @@ function targetUid(req) {
 }
 
 // ---------- 练习进度上报（前端每 20 秒心跳 + 退出补报，当日累加） ----------
+// 练习模式白名单（前端 tracker 上报）：未知值一律留空，展示时当「历史记录」。
+const PRACTICE_MODES = ['game', 'poetry', 'lyrics', 'piano'];
+const modeOf = (v) => (PRACTICE_MODES.includes(String(v || '')) ? String(v) : '');
+// 会话 id：前端每次进入模式时生成，心跳/补报都带同一个 → 一次练习只累加一行流水。
+// 旧前端（缓存里的 JS）不带这个字段，落进「一天一行」的兜底桶 day:YYYY-MM-DD——
+// 与 db.js 的历史回填用同一个 id，所以升级当天「回填的当天汇总」与「旧 JS 的补报」会并进同一行，
+// 不会同一天出现两行重复计数。
+const sessionOf = (v, day) => {
+  const s = String(v || '').trim();
+  return /^[A-Za-z0-9_-]{6,64}$/.test(s) ? s : 'day:' + day;
+};
 router.post('/typing/progress', (req, res) => {
   const num = (v, max) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
   const seconds = num(req.body.seconds, 600);
   const correct = num(req.body.correct, 3000);
   const wrong = num(req.body.wrong, 3000);
   if (seconds || correct || wrong) {
+    const day = todayStr();
     db.prepare(
       `INSERT INTO typing_days(user_id, day, seconds, correct, wrong, updated_at)
        VALUES(?,?,?,?,?,datetime('now','localtime'))
@@ -102,7 +118,19 @@ router.post('/typing/progress', (req, res) => {
          correct = correct + excluded.correct,
          wrong = wrong + excluded.wrong,
          updated_at = datetime('now','localtime')`
-    ).run(req.user.id, todayStr(), seconds, correct, wrong);
+    ).run(req.user.id, day, seconds, correct, wrong);
+    // 练习流水（v1.13.13）：只给「打字记录」页显示日期时间与打字项目；金额口径永远只看上面的 typing_days。
+    // mode 只在非空时覆盖（同一会话里前端偶尔漏带模式不会把已知的模式抹掉）。
+    db.prepare(
+      `INSERT INTO typing_logs(user_id, session_id, day, mode, started_at, updated_at, seconds, correct, wrong)
+       VALUES(?,?,?,?,datetime('now','localtime'),datetime('now','localtime'),?,?,?)
+       ON CONFLICT(user_id, session_id) DO UPDATE SET
+         seconds = seconds + excluded.seconds,
+         correct = correct + excluded.correct,
+         wrong = wrong + excluded.wrong,
+         mode = CASE WHEN excluded.mode <> '' THEN excluded.mode ELSE typing_logs.mode END,
+         updated_at = datetime('now','localtime')`
+    ).run(req.user.id, sessionOf(req.body.session, day), day, modeOf(req.body.mode), seconds, correct, wrong);
   }
   res.json({ ok: true });
 });
@@ -116,9 +144,20 @@ router.get('/typing/records', (req, res) => {
     'SELECT day, seconds, correct, wrong FROM typing_days WHERE user_id=? AND day>=? ORDER BY day DESC'
   ).all(uid, from);
   const t = rows.reduce((a, r) => ({ s: a.s + r.seconds, c: a.c + r.correct, w: a.w + r.wrong }), { s: 0, c: 0, w: 0 });
+  // 练习流水（v1.13.13）：一次练习一行，带开始时间与打字项目（游戏/诗词/歌词/钢琴）。
+  // 历史回填行的 started_at 就是日期本身（没有具体时间）→ at 回空串，前端只显示日期。
+  const logs = db.prepare(
+    `SELECT id, day, mode, started_at, seconds, correct, wrong FROM typing_logs
+     WHERE user_id=? AND day>=? ORDER BY day DESC, started_at DESC, id DESC`
+  ).all(uid, from);
   res.json({
     user_id: uid,
     days: rows.map((r) => ({ ...r, net: netChars(r.correct, r.wrong) })),
+    logs: logs.map((r) => ({
+      id: r.id, day: r.day, mode: r.mode || '',
+      at: String(r.started_at || '').length > 10 ? String(r.started_at).slice(0, 16) : '',
+      seconds: r.seconds, correct: r.correct, wrong: r.wrong, net: netChars(r.correct, r.wrong),
+    })),
     totals: { seconds: t.s, correct: t.c, wrong: t.w, net: netChars(t.c, t.w), accuracy: t.c + t.w ? Math.round(t.c / (t.c + t.w) * 100) : null },
     // admin 可在打字记录里切换查看任意成员
     users: req.user.role === 'admin'

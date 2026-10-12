@@ -16,26 +16,31 @@
       <div class="rc-card"><b>{{ totals.accuracy == null ? '—' : totals.accuracy + '%' }}</b><span>平均正确率</span></div>
     </div>
 
-    <!-- 打字每日记录（默认 15 行，可 15/30/50 翻页） -->
+    <!-- 打字练习流水（v1.13.13：一次练习一行——进入某个模式到离开；默认 15 行，可 15/30/50 翻页） -->
     <table class="rc-table">
       <thead>
-        <tr><th>序号</th><th>日期</th><th>练习时长</th><th>打对</th><th>打错</th><th>有效字数</th><th>正确率</th></tr>
+        <tr><th>序号</th><th>日期时间</th><th>打字项目</th><th>练习时长</th><th>打对</th><th>打错</th><th>有效字数</th><th>正确率</th></tr>
       </thead>
       <tbody>
-        <tr v-for="(d, i) in pageList" :key="d.day">
+        <tr v-for="(d, i) in pageList" :key="d.id">
           <td>{{ (page - 1) * pageSize + i + 1 }}</td>
-          <td>{{ d.day }}<span v-if="d.day === today" class="today">今天</span></td>
+          <td>
+            {{ d.day }}
+            <span v-if="d.at" class="tm">{{ d.at.slice(11) }}</span>
+            <span v-if="d.day === today" class="today">今天</span>
+          </td>
+          <td><span class="mode" :class="d.mode ? 'm-' + d.mode : 'm-hist'">{{ MODE_LABEL[d.mode] || '历史记录' }}</span></td>
           <td>{{ fmtDur(d.seconds) }}</td>
           <td class="ok">{{ d.correct }}</td>
           <td class="bad">{{ d.wrong }}</td>
           <td :class="d.net < 0 ? 'bad' : 'ok'">{{ d.net }}</td>
           <td>{{ d.correct + d.wrong ? Math.round(d.correct / (d.correct + d.wrong) * 100) + '%' : '—' }}</td>
         </tr>
-        <tr v-if="!days.length"><td colspan="7" class="empty">最近 {{ range }} 天还没有练习记录，去「打字」打一局吧～</td></tr>
+        <tr v-if="!logs.length"><td colspan="8" class="empty">最近 {{ range }} 天还没有练习记录，去「打字」打一局吧～</td></tr>
       </tbody>
     </table>
-    <div v-if="days.length" class="rc-pager">
-      <span class="muted" style="font-size:12px">共 {{ days.length }} 条</span>
+    <div v-if="logs.length" class="rc-pager">
+      <span class="muted" style="font-size:12px">共 {{ logs.length }} 条</span>
       <span class="grow"></span>
       <button class="small" :disabled="page <= 1" @click="page--">‹ 上一页</button>
       <span class="muted" style="font-size:12px">{{ page }} / {{ totalPages }}</span>
@@ -96,8 +101,10 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { api } from '../api';
 
-const days = ref([]);
+const logs = ref([]);            // 练习流水：一次练习一行（日期时间 + 打字项目）
 const totals = ref({ seconds: 0, correct: 0, wrong: 0, net: 0, accuracy: null });
+// 打字项目 → 中文名（服务端给的是 tracker 上报的 mode 原值；空 = v1.13.13 之前按天回填的历史行）
+const MODE_LABEL = { game: '游戏模式', poetry: '诗词模式', lyrics: '歌词模式', piano: '钢琴模式' };
 const users = ref(null);
 const uid = ref(0);
 const range = 366; // 拉一年，翻页才有内容
@@ -107,11 +114,11 @@ const me = computed(() => {
   return { id: u ? u.id : 0, name: '自己' };
 });
 
-// ---------- 打字列表分页（15/30/50，客户端切页） ----------
+// ---------- 打字流水分页（15/30/50，客户端切页） ----------
 const page = ref(1);
 const pageSize = ref(15);
-const totalPages = computed(() => Math.max(1, Math.ceil(days.value.length / pageSize.value)));
-const pageList = computed(() => days.value.slice((Math.min(page.value, totalPages.value) - 1) * pageSize.value, Math.min(page.value, totalPages.value) * pageSize.value));
+const totalPages = computed(() => Math.max(1, Math.ceil(logs.value.length / pageSize.value)));
+const pageList = computed(() => logs.value.slice((Math.min(page.value, totalPages.value) - 1) * pageSize.value, Math.min(page.value, totalPages.value) * pageSize.value));
 watch(pageSize, () => { page.value = 1; });
 
 // ---------- 赊账兑换只读列表（服务端分页） ----------
@@ -146,7 +153,7 @@ function fmtDur(sec) {
 async function load() {
   const q = uid.value && uid.value !== me.value.id ? `?user_id=${uid.value}&days=${range}` : `?days=${range}`;
   const d = await api.get('/typing/records' + q);
-  days.value = d.days || [];
+  logs.value = d.logs || [];
   totals.value = d.totals || { seconds: 0, correct: 0, wrong: 0, net: 0, accuracy: null };
   users.value = d.users || null;
   if (!uid.value) uid.value = d.user_id;
@@ -169,6 +176,13 @@ onMounted(() => { load(); loadCredit(1); });
 .rc-table .ok { color: var(--green); font-weight: 600; }
 .rc-table .bad { color: var(--red); }
 .today { font-size: 11px; color: var(--accent); margin-left: 6px; border: 1px solid var(--accent); border-radius: 6px; padding: 0 5px; }
+.tm { margin-left: 6px; font-size: 12.5px; color: var(--text2); }
+.mode { font-size: 11.5px; border-radius: 8px; padding: 1px 8px; background: var(--bg3); color: var(--text2); }
+.mode.m-game { background: rgba(251, 191, 36, .15); color: #b7791f; }
+.mode.m-poetry { background: rgba(99, 102, 241, .15); color: #6366f1; }
+.mode.m-lyrics { background: rgba(236, 72, 153, .15); color: #db2777; }
+.mode.m-piano { background: rgba(14, 165, 233, .15); color: #0284c7; }
+.mode.m-hist { color: var(--text3); }
 .rc-pager { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .rc-pager .small { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; }
 .grow { flex: 1; }
