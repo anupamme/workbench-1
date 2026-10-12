@@ -109,6 +109,21 @@ try {
   await page.waitForSelector('.wish .setup h3', { timeout: 15000 });
   await page.waitForTimeout(500);
 
+  // 铺满窗口宽度（v1.13.18，用户要求「心愿卡页面也宽度自适应，不要限制宽度」）：
+  // 心愿卡借 mainFull 开关在挂载期间放开 App.vue `.main` 的 1200px 上限。
+  // ⚠️ 只在宽视口看得出：默认 1280 的视口里左侧栏占掉约 190，内容区本就不到 1200。
+  const mainState = () => page.evaluate(() => {
+    const el = document.querySelector('main.main');
+    return el ? { max: getComputedStyle(el).maxWidth, w: Math.round(el.getBoundingClientRect().width) } : null;
+  });
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.waitForTimeout(400);
+  {
+    const m = await mainState();
+    ck('心愿卡挂载时 .main 放开 1200px 上限（main-full）', !!m && m.max === 'none', JSON.stringify(m));
+    ck('窗口拉宽到 1800 时内容区跟着变宽（没有 1200px 上限了）', !!m && m.w > 1500, JSON.stringify(m));
+  }
+
   // 多选上传 3 张
   await page.setInputFiles('.setup input[type=file]', [
     { name: 'w1.png', mimeType: 'image/png', buffer: pngBuf },
@@ -154,6 +169,16 @@ try {
   await page.waitForTimeout(400);
   ck('编辑回显 2 张', await page.locator('.wish .thumbs .th').count() === 2);
   await page.locator('.wish .setup button', { hasText: '取消编辑' }).click();
+
+  // 切走之后 1200px 上限要还回来（别的页面布局不受影响）
+  await page.locator('.tabs button', { hasText: '打字' }).first().click();
+  await page.waitForTimeout(400);
+  {
+    const back = await mainState();
+    ck('切到别的 tab 后 .main 的 1200px 上限还回来', !!back && back.max !== 'none', JSON.stringify(back));
+  }
+  await page.locator('.tabs button', { hasText: '心愿卡' }).first().click();
+  await page.waitForTimeout(300);
 
   ck('无 pageerror', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();

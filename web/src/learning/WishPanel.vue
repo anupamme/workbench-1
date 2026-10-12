@@ -123,9 +123,14 @@
 
 <script setup>
 // 心愿卡：产品看板打卡（每人每天 2 次、每产品 1 次）+ 产品列表 + 产品设置（wishset 受限权限）。
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, inject } from 'vue';
 import { api } from '../api';
 import { canTab } from '../tabs';
+
+// 铺满窗口宽度（v1.13.18）：心愿卡是「看板横排 + 下面的表格」，被 App.vue 的 `.main` 封在 1200px 里时
+// 看板一排摆不下几件、右侧留一大片空。借「学习监控 / 人生管理 / 地理」同一套 mainFull 开关：
+// 本面板挂载期间放开上限，切走（v-if/v-else-if 互斥、卸载先于下一个挂载）即还原。
+const mainFull = inject('wbMainFull', null);
 
 const canManage = canTab('learning', 'wishset');
 
@@ -264,10 +269,14 @@ const imgCount = (p) => (p.images && p.images.length ? p.images.length : p.image
 const fmt = (n) => { const v = Number(n) || 0; return Number.isInteger(v) ? String(v) : v.toFixed(2); };
 
 onMounted(() => {
+  if (mainFull) mainFull.value = true;
   load();
   window.addEventListener('keydown', onKey);
 });
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
+onBeforeUnmount(() => {
+  if (mainFull) mainFull.value = false;
+  window.removeEventListener('keydown', onKey);
+});
 </script>
 
 <style scoped>

@@ -217,7 +217,9 @@ try {
   ok((allow || '').includes('fullscreen'), 'iframe 带 allow="fullscreen"（页内全屏按钮可用）', allow || '');
 
   // 切走再切回：组件不残留、能再次加载（tab 反复切换是日常动作）
-  await p.locator('.tabs button', { hasText: '心愿卡' }).first().click();
+  // ⚠️ 切走要挑一个**自己不放宽**的 tab：心愿卡自 v1.13.18 起也申请铺满（mainFull），
+  // 拿它验证「上限还回来」会假红——这里用「打字」。
+  await p.locator('.tabs button', { hasText: '打字' }).first().click();
   await sleep(400);
   ok((await p.locator('iframe.geo-frame').count()) === 0, '切到别的 tab 后地球仪 iframe 被卸载（不留后台 WebGL 上下文）');
   const back = await mainState();

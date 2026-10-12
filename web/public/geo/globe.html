@@ -210,19 +210,17 @@
   .lg-row .ln { width: 22px; height: 0; flex: none; border-top-width: 3px; border-top-style: solid; border-radius: 2px; }
   .lg-row .ln.dashed { border-top-style: dashed; border-top-width: 3px; }
 
-  /* ---------- 坐标查询坞 ---------- */
+  /* ---------- 坐标查询坞（v1.0.4：去掉「刮一刮 / 再遮住」，只留读数框；整块可收到右边） ---------- */
   #dock {
-    position: absolute; right: 14px; bottom: 14px; z-index: 15; width: 292px;
+    position: absolute; right: 32px; bottom: 14px; z-index: 15; width: 292px;
     background: var(--card); border: 1px solid var(--line); border-radius: 10px;
     backdrop-filter: blur(9px); box-shadow: var(--shadow); overflow: hidden;
+    transition: transform .3s cubic-bezier(.4, 0, .2, 1), opacity .26s ease;
   }
-  #dock .dk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-  #dock .dk-head .t { font-size: 12.5px; font-weight: 600; letter-spacing: .4px; margin-right: 2px; }
-  .dk-btn {
-    background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11.5px;
-  }
-  .dk-btn:hover { background: rgba(255,255,255,.11); }
-  .dk-btn.on { background: linear-gradient(180deg, rgba(79,209,255,.28), rgba(124,155,255,.18)); border-color: rgba(79,209,255,.6); }
+  /* 收起：整块滑到右侧画面外（透明度一起收），右侧把手留在原处可以点回来 */
+  body.dock-collapsed #dock { transform: translateX(calc(100% + 44px)); opacity: 0; pointer-events: none; }
+  #dock .dk-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  #dock .dk-head .t { font-size: 12.5px; font-weight: 600; letter-spacing: .4px; }
   #data-panel { position: relative; min-height: 108px; }
   #coordinate-result {
     padding: 12px 12px 14px; font-variant-numeric: tabular-nums; line-height: 1.9;
@@ -234,12 +232,18 @@
   #coordinate-result .r-sub { color: var(--muted); font-size: 12px; }
   #coordinate-result .r-tags { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
   #coordinate-result .r-tags span { font-size: 11px; color: #bcd7f5; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; }
-  #scratch-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: none; touch-action: none; cursor: crosshair; }
-  #scratch-hint {
-    position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; font-size: 11.5px; color: var(--muted);
-    pointer-events: none; display: none;
+
+  /* 右侧把手：点一下把坐标查询整块收到右边，再点一下放出来 */
+  #dock-tab {
+    position: absolute; right: 0; bottom: 44px; z-index: 16; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; width: 30px; padding: 12px 0;
+    background: var(--card); border: 1px solid var(--line); border-right: none; border-radius: 10px 0 0 10px;
+    backdrop-filter: blur(9px); box-shadow: var(--shadow); color: #cfe0f5; font-size: 12px;
   }
-  body.scratch #scratch-canvas, body.scratch #scratch-hint { display: block; }
+  #dock-tab:hover { color: #fff; background: rgba(79,209,255,.16); border-color: rgba(79,209,255,.5); }
+  #dock-tab .dt-txt { writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 3px; }
+  #dock-tab .dt-arrow { font-size: 11px; color: var(--muted); line-height: 1; }
+  #dock-tab:hover .dt-arrow { color: #fff; }
 
   /* ---------- 加载 / 兜底 ---------- */
   #loading {
@@ -284,7 +288,7 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand"><span class="globe-ico">🌏</span>地理 · 3D 地球仪<span class="ver">自制版 v1.0.3</span></div>
+    <div class="brand"><span class="globe-ico">🌏</span>地理 · 3D 地球仪<span class="ver">自制版 v1.0.4</span></div>
     <div class="topnav">
       <button class="navbtn active" id="btn-3d">3D 地球仪模式</button>
       <button class="navbtn" id="btn-2d">2D 平面地图模式</button>
@@ -336,20 +340,18 @@
         </div>
       </div>
 
-      <!-- 坐标查询 -->
+      <!-- 坐标查询（v1.0.4：去掉「刮一刮 / 再遮住」，只留读数框；右侧把手可把整块收到右边） -->
       <div id="dock">
         <div class="dk-head">
           <span class="t">坐标查询</span>
-          <button class="dk-btn on" data-mode="direct">直接显示</button>
-          <button class="dk-btn" data-mode="scratch">刮一刮</button>
-          <button class="dk-btn" id="scratch-reset">↻ 再遮住</button>
         </div>
         <div id="data-panel">
           <div id="coordinate-result"><div class="ph">请点击地图或地球查询坐标位置</div></div>
-          <canvas id="scratch-canvas"></canvas>
-          <div id="scratch-hint">✦ 按住并滑动，刮开查看经纬度 ✦</div>
         </div>
       </div>
+      <button id="dock-tab" title="收起 / 展开坐标查询" aria-label="收起或展开坐标查询" aria-expanded="true">
+        <span class="dt-arrow">▸</span><span class="dt-txt">坐标查询</span>
+      </button>
 
       <div class="footbar">拖动旋转 · 滚轮缩放 · 单击点读经纬度</div>
       <button id="panel-show">控制面板</button>
@@ -1013,12 +1015,9 @@
   }
 
   /* ============================================================
-   *  八、坐标面板 + 刮一刮
+   *  八、坐标面板（v1.0.4：只留读数框；整块可收到右边）
    * ============================================================ */
   var resultEl = document.getElementById('coordinate-result');
-  var scratch = document.getElementById('scratch-canvas');
-  var sctx = scratch.getContext('2d');
-  var scratchMode = false;
 
   function fmtLat(v) { return (v >= 0 ? '北纬 ' : '南纬 ') + Math.abs(v).toFixed(2) + '°'; }
   function fmtLon(v) { return (v >= 0 ? '东经 ' : '西经 ') + Math.abs(v).toFixed(2) + '°'; }
@@ -1033,62 +1032,21 @@
       '<span>' + (lon >= 0 ? '东半球' : '西半球') + '</span>' +
       (Math.abs(lat) < 23.5 ? '<span>热带</span>' : Math.abs(lat) < 66.5 ? '<span>温带</span>' : '<span>寒带</span>') +
       '</div>';
-    if (scratchMode) coverScratch();
   }
 
-  function coverScratch() {
-    var w = Math.max(1, Math.round(scratch.clientWidth * dpr));
-    var h = Math.max(1, Math.round(scratch.clientHeight * dpr));
-    if (scratch.width !== w || scratch.height !== h) { scratch.width = w; scratch.height = h; }
-    var g = sctx.createLinearGradient(0, 0, w, h);
-    g.addColorStop(0, '#22304a'); g.addColorStop(.5, '#1a2740'); g.addColorStop(1, '#22304a');
-    sctx.globalCompositeOperation = 'source-over';
-    sctx.fillStyle = g;
-    sctx.fillRect(0, 0, w, h);
-    // 斜纹 + 提示
-    sctx.strokeStyle = 'rgba(140,180,230,.14)';
-    sctx.lineWidth = 1 * dpr;
-    for (var x = -h; x < w; x += 14 * dpr) {
-      sctx.beginPath(); sctx.moveTo(x, 0); sctx.lineTo(x + h, h); sctx.stroke();
-    }
-    sctx.fillStyle = 'rgba(200,222,250,.85)';
-    sctx.font = (13 * dpr) + 'px "PingFang SC","Microsoft YaHei",system-ui,sans-serif';
-    sctx.textAlign = 'center'; sctx.textBaseline = 'middle';
-    sctx.fillText('刮一刮 · 看答案', w / 2, h / 2 - 4 * dpr);
-    sctx.fillStyle = 'rgba(160,190,225,.7)';
-    sctx.font = (11 * dpr) + 'px "PingFang SC","Microsoft YaHei",system-ui,sans-serif';
-    sctx.fillText('按住并滑动', w / 2, h / 2 + 16 * dpr);
+  // 坐标查询整块收起 / 展开：收起 = 给 body 加 dock-collapsed（滑走 + 淡出都交给 CSS），
+  // 右侧把手始终在原处，箭头与 aria 跟着翻——点一下收进去、再点一下放出来。
+  var dockTab = document.getElementById('dock-tab');
+  var dockArrow = dockTab.querySelector('.dt-arrow');
+  function setDockCollapsed(c) {
+    document.body.classList.toggle('dock-collapsed', c);
+    dockArrow.textContent = c ? '◂' : '▸';
+    dockTab.setAttribute('aria-expanded', c ? 'false' : 'true');
+    dockTab.title = (c ? '展开' : '收起') + '坐标查询';
   }
-
-  var scratching = false;
-  function scratchAt(ev) {
-    var r = scratch.getBoundingClientRect();
-    var x = (ev.clientX - r.left) * dpr, y = (ev.clientY - r.top) * dpr;
-    sctx.globalCompositeOperation = 'destination-out';
-    sctx.lineWidth = 26 * dpr; sctx.lineCap = 'round'; sctx.lineJoin = 'round';
-    sctx.beginPath();
-    sctx.moveTo(scratch._lx == null ? x : scratch._lx, scratch._ly == null ? y : scratch._ly);
-    sctx.lineTo(x, y); sctx.stroke();
-    sctx.beginPath(); sctx.arc(x, y, 13 * dpr, 0, 6.2832); sctx.fill();
-    scratch._lx = x; scratch._ly = y;
-  }
-  scratch.addEventListener('pointerdown', function (e) {
-    scratching = true; scratch._lx = null; scratch._ly = null;
-    scratch.setPointerCapture(e.pointerId); scratchAt(e); e.preventDefault();
+  dockTab.addEventListener('click', function () {
+    setDockCollapsed(!document.body.classList.contains('dock-collapsed'));
   });
-  scratch.addEventListener('pointermove', function (e) { if (scratching) { scratchAt(e); e.preventDefault(); } });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
-    scratch.addEventListener(t, function () { scratching = false; scratch._lx = null; });
-  });
-
-  function setAnswerMode(m) {
-    scratchMode = (m === 'scratch');
-    document.body.classList.toggle('scratch', scratchMode);
-    Array.prototype.forEach.call(document.querySelectorAll('#dock .dk-btn[data-mode]'), function (b) {
-      b.classList.toggle('on', b.getAttribute('data-mode') === m);
-    });
-    if (scratchMode) { coverScratch(); } else { resultEl.style.visibility = ''; }
-  }
 
   /* ============================================================
    *  九、点读（3D + 2D 共用）
@@ -1283,13 +1241,6 @@
     setTimeout(resizeCanvas, 120);
   });
 
-  Array.prototype.forEach.call(document.querySelectorAll('#dock .dk-btn[data-mode]'), function (b) {
-    b.addEventListener('click', function () { setAnswerMode(b.getAttribute('data-mode')); });
-  });
-  document.getElementById('scratch-reset').addEventListener('click', function () {
-    if (!scratchMode) setAnswerMode('scratch'); else coverScratch();
-  });
-
   /* ============================================================
    *  十二、主循环 / 启动
    * ============================================================ */
@@ -1337,8 +1288,8 @@
     };
   }
 
-  window.addEventListener('resize', function () { resizeCanvas(); if (scratchMode) coverScratch(); });
-  if (window.ResizeObserver) new ResizeObserver(function () { resizeCanvas(); if (scratchMode) coverScratch(); }).observe(stage);
+  window.addEventListener('resize', resizeCanvas);
+  if (window.ResizeObserver) new ResizeObserver(resizeCanvas).observe(stage);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) dirty = true; });
 
   start();
