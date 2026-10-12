@@ -45,7 +45,14 @@ if (!PROXY && (!BIN || !VAE || !LM)) {
   process.exit(1);
 }
 if (!PROXY) for (const [label, p] of [['引擎', BIN], ['VAE 模型', VAE], ['LM 模型', LM]]) {
-  if (!fs.existsSync(p)) { console.error(`错误: ${label}不存在: ${p}`); process.exit(1); }
+  if (!fs.existsSync(p)) {
+    console.error(`错误: ${label}不存在: ${p}`);
+    // 引擎二进制缺失的头号原因不是本机磁盘问题，而是安装时工作台没把它下发下来
+    // （/api/vibe/client-download 只发服务器上已有的文件）。把这句话写清楚：
+    // 2026-10-12 用户在新电脑上只看到「引擎不存在」，真因埋在 service.err.log 里找了一轮。
+    if (label === '引擎') console.error('提示: 若刚安装完就报这一句，多半是安装时工作台没下发引擎文件——重跑 setup.ps1 看 agent.log 末尾的 FATAL 行；四件套 = asr_stream_server.exe + libgcc_s_seh-1.dll + libstdc++-6.dll + libwinpthread-1.dll');
+    process.exit(1);
+  }
 }
 
 // ---------- 引擎子进程 ----------

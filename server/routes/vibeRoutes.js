@@ -557,17 +557,29 @@ function baseUrl(req) {
   return `${xfp || req.protocol}://${req.get('host')}`;
 }
 
-// 可下发文件清单：客户端部署包固定发 Windows 引擎——优先项目随包分发的 vibeasr/win-x64
-// （Linux 生产容器自身引擎是源码编译的 linux 产物，不能也不该发给 Windows 客户端），
-// 没有再退回本机安装目录（Windows 服务器自装后两者内容相同）。外加 sidecar 脚本。
+// Windows 客户端引擎必备四件套（客户端 setup.ps1 逐个校验——缺一个 sidecar 就起不来）
+const WIN_ENGINE_FILES = ['asr_stream_server.exe', 'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll'];
+
+// 可下发文件清单：客户端部署包固定发 Windows 引擎（Linux 生产容器自身引擎是源码编译的 linux
+// 产物，不能也不该发给 Windows 客户端），按顺序找三个位置：
+//   ① <应用目录>/vibeasr/win-x64——随升级包 / 镜像分发（apply 白名单里有 vibeasr/）
+//   ② <持久数据目录>/vibeasr/win-x64——容器重建会丢可写层，这里是 /data 挂载：
+//      管理员把四件套拷进来即可永久生效，不必再打升级包
+//   ③ <引擎 ROOT>/bin——Windows 服务器本机自装的引擎（与 ① 内容相同）
+// 2026-10-12 用户报障（新电脑装完报「引擎不存在」）根因就在这儿只认 ① 和 ③：生产容器镜像
+// 打于 vibeasr/ 进入仓库之前（2026-08-21），增量升级包又从来不带它，于是 ① 一直不存在
+// → 客户端 engine\ 落空 → 每 30 秒重启一次。**缺失时不要把 files 当成功**：
+// 回包里带 missing 名单，客户端据此当场报错停下（见 PS_TEMPLATE 第 2b 步）。
 function clientFileList() {
-  const dir = fs.existsSync(paths.SHIPPED_WIN_EXE) ? paths.SHIPPED_WIN_DIR : paths.BIN_DIR;
+  const cands = [...new Set([paths.SHIPPED_WIN_DIR, path.join(paths.DATA_VIBEASR, 'win-x64'), paths.BIN_DIR])].filter(Boolean);
+  const dir = cands.find((d) => fs.existsSync(path.join(d, WIN_ENGINE_FILES[0]))) || cands.find((d) => fs.existsSync(d)) || cands[0];
   const files = [];
   if (fs.existsSync(dir)) {
     for (const f of fs.readdirSync(dir)) if (/\.(exe|dll)$/i.test(f)) files.push({ name: f, size: fs.statSync(path.join(dir, f)).size, tag: 'engine' });
   }
   if (fs.existsSync(paths.SIDECAR)) files.push({ name: 'server.js', size: fs.statSync(paths.SIDECAR).size, tag: 'sidecar' });
-  return { files, dir };
+  const missing = WIN_ENGINE_FILES.filter((n) => !fs.existsSync(path.join(dir, n)));
+  return { files, dir, missing, engine_ok: missing.length === 0 };
 }
 
 // 登记密钥校验
@@ -655,6 +667,15 @@ const PS_TEMPLATE = [
   "    # 文件名必须 URL 编码：libstdc++-6.dll 里的 + 不编码会被服务端解成空格（曾 404 → 坏 DLL → 引擎崩溃循环）",
   "    DlUrl ($Server + '/api/vibe/client-download?f=' + [uri]::EscapeDataString($f.name) + '&k=' + $Key) $dest",
   "    if ((Get-Item $dest).Length -ne [long]$f.size) { throw ('size mismatch: ' + $f.name + ' expect ' + $f.size + ' got ' + (Get-Item $dest).Length) }",
+  '  }',
+  '  # 2b) 引擎自检（2026-10-12）：服务器没下发引擎文件时当场说清楚并停在原地——旧版带着空的',
+  '  #     engine\\ 继续跑：模型照下 1.7GB、sidecar 报「引擎不存在」退出、看护每 30 秒把它拉起来一次，',
+  '  #     真因全埋在 service.err.log 里（用户只看到「装完没反应」）。判据 = 必备四件套是否落地。',
+  "  $need = @('asr_stream_server.exe','libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')",
+  "  $miss = @($need | Where-Object { -not (Test-Path (Join-Path $eng $_)) })",
+  '  if ($miss.Count -gt 0) {',
+  "    $why = if ($list.missing) { '（服务器自报缺：' + ($list.missing -join '、') + '）' } else { '' }",
+  "    throw ('服务器没有下发 Windows 引擎二进制，缺 ' + ($miss -join '、') + $why + '。请让管理员给工作台发一个含 vibeasr/win-x64/ 的升级包，或把四件套拷进服务器数据目录下 vibeasr\\win-x64\\ 再重跑本脚本。本次安装已停止（不会进入重启循环）。')",
   '  }',
   "  # 3) 模型（hf-mirror 直下，断点续传；两文件共约 1.7GB）",
   "  $models = @(",
