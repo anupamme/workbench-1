@@ -59,6 +59,9 @@ export const TAB_DEFS = {
     { key: 'payout', label: '兑现登记', restricted: true },
     { key: 'piano', label: '练琴' },
     { key: 'wish', label: '心愿卡' },
+    // 地理（v1.13.14）：第三方「地球仪 · 3D模拟实验室 V0916-1」整页原样嵌入（iframe 全高），
+    // 无自有 API（auth.js TAB_PATHS.learning 给空前缀，只为授权表列全键）
+    { key: 'geo', label: '地理' },
     // 隐藏伪 tab：不出现在页内 tab 栏，但权限表里可勾选（对应受限子功能）
     { key: 'pianoconfirm', label: '练琴确认', restricted: true, hidden: true },
     { key: 'wishset', label: '心愿卡设置', restricted: true, hidden: true },

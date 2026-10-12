@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h2 class="page-title">学习 <span class="muted" style="font-size:13px">听写 · 视频 · 打字 · 练琴 · 心愿卡</span></h2>
+    <h2 class="page-title">学习 <span class="muted" style="font-size:13px">听写 · 视频 · 打字 · 练琴 · 心愿卡 · 地理</span></h2>
     <!-- tab 栏直接由 TAB_DEFS 驱动（跳过 hidden 伪 tab），与权限表自动保持一致；受限 tab 带 🔒 -->
     <div class="tabs">
       <button v-for="t in visibleTabs" :key="t.key" :class="{ active: tab === t.key }" @click="switchTab(t.key)">
@@ -20,6 +20,8 @@
     <PayoutPanel v-else-if="tab === 'payout'" />
     <PianoPanel v-else-if="tab === 'piano'" />
     <WishPanel v-else-if="tab === 'wish'" />
+    <!-- 地理：第三方地球仪整页 iframe 嵌入（v1.13.14） -->
+    <GeoPanel v-else-if="tab === 'geo'" />
     <!-- 语音配音已移至「效率工具」页最后一个 tab（2026-09 v1.6.5） -->
   </div>
 </template>
@@ -35,6 +37,7 @@ import VLogPanel from '../learning/VLogPanel.vue';
 import VLedgerPanel from '../learning/VLedgerPanel.vue';
 import PianoPanel from '../learning/PianoPanel.vue';
 import WishPanel from '../learning/WishPanel.vue';
+import GeoPanel from '../learning/GeoPanel.vue';
 import PracticePanel from '../typing/PracticePanel.vue';
 import RecordsPanel from '../typing/RecordsPanel.vue';
 import MoneyPanel from '../typing/MoneyPanel.vue';

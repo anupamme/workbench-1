@@ -205,6 +205,9 @@ const TAB_PATHS = {
     ['wish', ['=/wish/checkin', '=/wish/products']],
     // 心愿卡设置（上传/改/删产品）：受限，独立于 wish tab
     ['wishset', ['/wish/manage']],
+    // 地理（v1.13.14）：第三方地球仪整页 iframe 嵌入，**无自有 API**——空数组 = 只为授权表
+    // 列全键（缺键时受限用户 allowed_tabs 里勾过的 geo 会被 sanitizeTabs 剥掉）
+    ['geo', []],
   ],
   tools: [
     ['clip', ['/clipboard']],
