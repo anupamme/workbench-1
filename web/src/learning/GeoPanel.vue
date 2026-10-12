@@ -40,7 +40,7 @@
 // 历史：v1.13.14 嵌的是第三方页 earth-globe.html（© JZS LAB 尖子声原创，自带全文哈希
 // 自检、只能原样托管），已按用户要求整套自研替换，那份文件已移出构建树。
 // vite 把 web/public/** 原样拷进 dist 根，所以它随升级包分发。
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount, inject } from 'vue';
 import { prefixUrl } from '../api';
 
 // 同源相对地址（含 fnOS 网关 /app/{appname} 前缀）——iframe 的 src 不能用 /api 那套 token 拼接
@@ -49,7 +49,14 @@ const loaded = ref(false);
 const checking = ref(true);
 const missing = ref(false);
 
+// 占满窗口宽度（v1.13.17）：每一页都会被 App.vue 的 `.main` 封在 1200px 里，而地球仪是整块画布，
+// 窄了就成了中间一颗球、左右两片空。借「学习监控 / 人生管理」那套 mainFull 开关：
+// 本面板挂载期间放开上限，切走（v-else-if 卸载）即还原——面板之间是 v-if/v-else-if 互斥，
+// 卸载先于下一个挂载，所以「后挂的那个说了算」永远成立。
+const mainFull = inject('wbMainFull', null);
+
 onMounted(async () => {
+  if (mainFull) mainFull.value = true;
   // HEAD 探一下文件在不在：不在就直说「本版没带上」，别让用户对着白框猜
   try {
     const r = await fetch(url.value, { method: 'HEAD', cache: 'no-store' });
@@ -57,6 +64,8 @@ onMounted(async () => {
   } catch { /* 探不通就当它在（可能是网关拦了 HEAD），交给 iframe 自己表现 */ }
   checking.value = false;
 });
+
+onBeforeUnmount(() => { if (mainFull) mainFull.value = false; });
 </script>
 
 <style scoped>

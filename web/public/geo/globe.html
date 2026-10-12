@@ -284,7 +284,7 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand"><span class="globe-ico">🌏</span>地理 · 3D 地球仪<span class="ver">自制版 v1.0.2</span></div>
+    <div class="brand"><span class="globe-ico">🌏</span>地理 · 3D 地球仪<span class="ver">自制版 v1.0.3</span></div>
     <div class="topnav">
       <button class="navbtn active" id="btn-3d">3D 地球仪模式</button>
       <button class="navbtn" id="btn-2d">2D 平面地图模式</button>
@@ -417,6 +417,12 @@
   'use strict';
   var D2R = Math.PI / 180, R2D = 180 / Math.PI;
   var FOV = 42 * D2R;                  // 垂直视场角
+  // 相机距离（越小球越大）。用户要求「打开别那么大、要能看见整颗球」——
+  // 球在屏幕上的视半径 = tan(asin(1/dist))/tan(FOV/2) × 画布高/2：
+  //   dist 2.75 → 约 95% 画布高（顶天立地，地轴 N/S 两端全在画面外）
+  //   dist 3.6  → 约 75%，四周留白，倾斜 23.5° 的地轴两端也进得了画面
+  var DIST_DEFAULT = 3.6;              // 正球视角（打开就是这个）
+  var DIST_POLAR = 3.2;                // 极地视角：俯视时球是正圆，稍近一点看着才不小
   var TEX_URL = 'textures/blue-marble-5400x2700.jpg';
 
   /* ============================================================
@@ -512,7 +518,7 @@
   /* ============================================================
    *  三、渲染状态
    * ============================================================ */
-  var cam = { lat: 12, lon: -30, dist: 2.75 };     // 视点中心 + 相机距离（缩放）
+  var cam = { lat: 12, lon: -30, dist: DIST_DEFAULT };  // 视点中心 + 相机距离（缩放）
   var opts = { meridians: true, parallels: true, names: true, step: 15, spin: false, speed: 18, tilt: true };
   var marker = null;                               // {lat, lon}
   var mode = '3d';
@@ -895,7 +901,10 @@
   /* ---------- 地轴（倾斜 23.5° 的可视化） ---------- */
   function drawAxis() {
     var axis = rot3(R3, [0, 1, 0]);                // 模型北极方向 → 世界
-    var ext = 1.42 * Math.max(1, cam.dist * 0.42);
+    // 地轴露出球外多长：ext ∝ dist 时轴尖在屏幕上的位置**与缩放无关**（远近同一条轴），
+    // 系数 0.33 让轴尖落在画面上方约 8% 处：球小了以后轴两端也在画面内（旧版 1.42×0.42×dist
+    // 在 dist 2.75 时轴尖已顶出画面外，看不到 N/S）。下限 1.2 保证拉近时轴仍露出球面。
+    var ext = Math.max(1.2, 0.33 * cam.dist);
     var n = worldToScreen([axis[0] * ext, axis[1] * ext, axis[2] * ext]);
     var s = worldToScreen([-axis[0] * ext, -axis[1] * ext, -axis[2] * ext]);
     if (!n || !s) { axisLine.style.opacity = 0; axisHalo.style.opacity = 0; axisN.style.display = 'none'; axisS.style.display = 'none'; return; }
@@ -1153,7 +1162,9 @@
   ['pointerup', 'pointercancel'].forEach(function (t) { glWrap.addEventListener(t, endPointer); });
 
   function rotateBy(dx, dy) {
-    var k = 0.26 * (2.75 / cam.dist);              // 放大时转得慢一点，手感一致
+    // 手感归一：按默认距离折算，所以「拖 N 像素转多少度」在默认视角下与改默认距离之前完全一致
+    //（Logs/probe-globe-fixed.mjs 有一条「向东拖 270px → 中心到 40.2°E」就靠它）
+    var k = 0.26 * (DIST_DEFAULT / cam.dist);      // 放大时转得慢一点，手感一致
     cam.lon = ((cam.lon - dx * k + 540) % 360) - 180;
     cam.lat = clampLat(cam.lat + dy * k);
     dirty = true;
@@ -1238,16 +1249,16 @@
   Array.prototype.forEach.call(document.querySelectorAll('.seg button[data-view]'), function (b) {
     b.addEventListener('click', function () {
       var v = b.getAttribute('data-view');
-      if (v === 'globe') { cam.lat = 12; cam.lon = -30; cam.dist = 2.75; }
-      else if (v === 'north') { cam.lat = 89.5; cam.lon = -30; cam.dist = 2.6; }
-      else { cam.lat = -89.5; cam.lon = -30; cam.dist = 2.6; }
+      if (v === 'globe') { cam.lat = 12; cam.lon = -30; cam.dist = DIST_DEFAULT; }
+      else if (v === 'north') { cam.lat = 89.5; cam.lon = -30; cam.dist = DIST_POLAR; }
+      else { cam.lat = -89.5; cam.lon = -30; cam.dist = DIST_POLAR; }
       Array.prototype.forEach.call(document.querySelectorAll('.seg button[data-view]'), function (o) { o.classList.remove('on'); });
       b.classList.add('on');
       dirty = true;
     });
   });
   document.getElementById('reset-view').addEventListener('click', function () {
-    cam.lat = 12; cam.lon = -30; cam.dist = 2.75;
+    cam.lat = 12; cam.lon = -30; cam.dist = DIST_DEFAULT;
     document.querySelector('.seg button[data-view="globe"]').click();
   });
 

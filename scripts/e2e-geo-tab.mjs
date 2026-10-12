@@ -118,6 +118,27 @@ try {
   const src = await frameEl.getAttribute('src');
   ok(new RegExp(`${PAGE.replace('.', '\\.')}$`).test(src || ''), `iframe 指向 ${PAGE}（相对路径，fnOS 网关前缀自动跟随）`, src || '');
 
+  // 占满窗口宽度（v1.13.17，用户要求「整个画面自适应宽度，不要限制宽度」）：
+  // 工作台每一页都被 App.vue 的 `.main` 封在 1200px 里，本面板挂载期间借 mainFull 开关放开。
+  const mainState = () => p.evaluate(() => {
+    const m = document.querySelector('main.main');
+    return m ? { max: getComputedStyle(m).maxWidth, w: Math.round(m.getBoundingClientRect().width) } : null;
+  });
+  const full = await mainState();
+  ok(!!full && full.max === 'none', '地理 tab 挂载时 .main 放开 1200px 上限（main-full）', JSON.stringify(full));
+  {
+    // 把窗口拉宽到 1800 才看得出「真没上限」：默认 1440 的视口里左侧栏占掉约 190，内容区只有 1250，
+    // 就算没放开也只差几十像素——必须换个宽视口来问这件事。
+    await p.setViewportSize({ width: 1800, height: 900 });
+    await sleep(500);
+    const wide = await mainState();
+    const fb = await frameEl.boundingBox();
+    ok(!!wide && wide.w > 1500, '窗口拉宽到 1800 时内容区跟着变宽（没有 1200px 上限了）', JSON.stringify(wide));
+    ok(!!fb && fb.width > 1400, '地球仪 iframe 跟着铺满窗口宽度', fb ? `${Math.round(fb.width)}px` : 'null');
+    await p.setViewportSize({ width: 1440, height: 900 });
+    await sleep(400);
+  }
+
   const fr = p.frames().find((f) => f.url().includes('globe.html'));
   ok(!!fr, 'iframe 已加载到地球仪页');
   await fr.waitForSelector('#loading.done', { timeout: 60000 }).catch(() => {});
@@ -199,6 +220,8 @@ try {
   await p.locator('.tabs button', { hasText: '心愿卡' }).first().click();
   await sleep(400);
   ok((await p.locator('iframe.geo-frame').count()) === 0, '切到别的 tab 后地球仪 iframe 被卸载（不留后台 WebGL 上下文）');
+  const back = await mainState();
+  ok(!!back && back.max !== 'none', '切走之后 .main 的 1200px 上限还回来（别的页面布局不受影响）', JSON.stringify(back));
   await p.locator('.tabs button', { hasText: '地理' }).first().click();
   await p.waitForSelector('iframe.geo-frame', { timeout: 10000 });
   // iframe 元素一挂上就存在了，但它里面的 frame 还要等导航才注册进来（刚挂上是 about:blank）
