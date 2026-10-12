@@ -588,7 +588,7 @@ personal-workbench/
 │   └── vibeasr/      #   VibeVoice 客户端引擎（Windows / Linux）
 ├── web/              # 前端
 │   ├── src/          #   Vue3 源码（views 页面 / components 组件 / nav.js 侧边栏 / ShApp 单模块外壳）
-│   ├── public/       #   Material Icons 字体、favicon.svg 等静态资源
+│   ├── public/       #   Material Icons 字体、favicon.svg、地理页（geo/globe.html + 底图）等静态资源
 │   ├── dist/         #   工作台构建产物（按时间戳版本目录，服务端自动托管最新）
 │   └── dist-sh/      #   「智能家居」单模块应用的构建产物（另一棵 dist 树，互不混淆）
 ├── fnos-sh/          # 「智能家居」单模块应用的 fpk 打包源（manifest / cmd / wizard / 图标 / 装配脚本）
