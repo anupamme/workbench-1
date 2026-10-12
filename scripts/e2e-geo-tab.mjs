@@ -201,8 +201,14 @@ try {
   ok((await p.locator('iframe.geo-frame').count()) === 0, '切到别的 tab 后地球仪 iframe 被卸载（不留后台 WebGL 上下文）');
   await p.locator('.tabs button', { hasText: '地理' }).first().click();
   await p.waitForSelector('iframe.geo-frame', { timeout: 10000 });
-  const fr2 = p.frames().find((f) => f.url().includes('globe.html'));
-  await fr2.waitForSelector('#loading.done', { timeout: 60000 }).catch(() => {});
+  // iframe 元素一挂上就存在了，但它里面的 frame 还要等导航才注册进来（刚挂上是 about:blank）
+  // ——直接 p.frames().find() 会拿到 undefined，这里轮询等它出现（曾经在这条上偶发假红）
+  let fr2 = null;
+  for (let i = 0; i < 60 && !fr2; i++) {
+    fr2 = p.frames().find((f) => f.url().includes('globe.html'));
+    if (!fr2) await sleep(250);
+  }
+  if (fr2) await fr2.waitForSelector('#loading.done', { timeout: 60000 }).catch(() => {});
   ok(!!fr2 && (await fr2.locator('#globe-canvas').count()) === 1, '切回「地理」能重新加载（第二次也正常）');
   ok((await p.url()).includes('tab=geo'), '切 tab 同步地址栏 ?tab=geo', p.url());
 

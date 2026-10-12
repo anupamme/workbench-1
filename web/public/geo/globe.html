@@ -284,7 +284,7 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand"><span class="globe-ico">🌏</span>地理 · 3D 地球仪<span class="ver">自制版 v1.0.1</span></div>
+    <div class="brand"><span class="globe-ico">🌏</span>地理 · 3D 地球仪<span class="ver">自制版 v1.0.2</span></div>
     <div class="topnav">
       <button class="navbtn active" id="btn-3d">3D 地球仪模式</button>
       <button class="navbtn" id="btn-2d">2D 平面地图模式</button>
@@ -332,7 +332,7 @@
           <div class="lg-row"><i class="ln dashed" style="border-top-color:#40ff59"></i>南北回归线（23.5°）</div>
           <div class="lg-row"><i class="ln dashed" style="border-top-color:#59ffff"></i>南北极圈（66.5°）</div>
           <div class="lg-row"><i class="ln" style="border-top-color:rgba(255,255,255,.7)"></i>普通经纬线（<b id="lg-step">15</b>° 间隔）</div>
-          <div class="lg-row"><i class="ln" style="border-top-color:#bfc7d4"></i>地轴（倾斜 23.5°）</div>
+          <div class="lg-row"><i class="ln" style="border-top-color:#bfc7d4"></i><span id="lg-axis">地轴（倾斜 23.5°）</span></div>
         </div>
       </div>
 
@@ -384,6 +384,7 @@
             <button data-view="north">北极</button>
             <button data-view="south">南极</button>
           </div>
+          <label class="chk"><input type="checkbox" id="tg-tilt" checked><span class="sw" style="background:#bfc7d4"></span>地轴倾斜 23.5°</label>
           <button class="wide-btn" id="reset-view">↺ 复位视角</button>
         </div>
 
@@ -484,21 +485,35 @@
     var a = lat * D2R, b = lon * D2R, ca = Math.cos(a);
     return [ca * Math.cos(b), Math.sin(a), -ca * Math.sin(b)];
   }
+  // 地轴倾角 23.5°：地球自转轴与「竖直方向」的夹角（真实值 23.44°）。
+  // 打开时整颗地球——经纬网、地名、地轴线、点读的那一点——一起绕**视线方向**转 23.5°，
+  // 看上去就是一枚斜插在支架上的实体地球仪（北极朝屏幕右上方翘），而不是把地球摆正。
+  // 之所以选「绕视线转」而不是「把球歪过去」：绕视线轴不动视线上那一点，所以
+  // 屏幕中心对应的经纬度、点读结果、拖动方向、自转（绕倾斜后的地轴）全部保持自洽；
+  // 换任何一种歪法，地轴都会随经度在屏幕上来回摆，转起来很晕。
+  var AXIAL_TILT = 23.5;
+  function axisTiltRz() {
+    var t = -AXIAL_TILT * D2R;                     // 负号 = 北极朝屏幕右上翘
+    var ct = Math.cos(t), st = Math.sin(t);
+    return [ct, -st, 0, st, ct, 0, 0, 0, 1];       // Rz(t)
+  }
   // 旋转：把 (latc, lonc) 转到相机正前方（+Z），并让东边落在屏幕右侧。
   // 推导：要 R·dirOf(latc,lonc) = (0,0,1) 且中心处 +lon 落在 +x → R = Rx(latc)·Ry(−90° − lonc)。
-  function viewRotation(latc, lonc) {
+  // 第三个参数（地轴倾斜）再左乘一个绕视线的 Rz——纯显示姿态，不改任何地理语义。
+  function viewRotation(latc, lonc, tilt) {
     var a = latc * D2R, b = (-90 - lonc) * D2R;
     var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
     var rx = [1, 0, 0, 0, ca, -sa, 0, sa, ca];     // Rx(a)
     var ry = [cb, 0, sb, 0, 1, 0, -sb, 0, cb];     // Ry(b)
-    return rot3Mul(rx, ry);
+    var r = rot3Mul(rx, ry);
+    return tilt ? rot3Mul(axisTiltRz(), r) : r;
   }
 
   /* ============================================================
    *  三、渲染状态
    * ============================================================ */
   var cam = { lat: 12, lon: -30, dist: 2.75 };     // 视点中心 + 相机距离（缩放）
-  var opts = { meridians: true, parallels: true, names: true, step: 15, spin: false, speed: 18 };
+  var opts = { meridians: true, parallels: true, names: true, step: 15, spin: false, speed: 18, tilt: true };
   var marker = null;                               // {lat, lon}
   var mode = '3d';
   var dirty = true;
@@ -514,7 +529,7 @@
   var texImg = document.getElementById('earth-texture');
 
   var gl = null, prog = null, tex = null, uniforms = {}, vbo = null, ibo = null, indexCount = 0;
-  var R3 = viewRotation(cam.lat, cam.lon), Rinv = transpose3(R3);
+  var R3 = viewRotation(cam.lat, cam.lon, opts.tilt), Rinv = transpose3(R3);
   var cssW = 0, cssH = 0, dpr = 1;
   var rimPx = 200;                                 // 地球在屏幕上的半径（像素）
 
@@ -734,7 +749,7 @@
   var offTexCache = {};
   function render() {
     if (!gl || !cssW || !cssH) return;
-    R3 = viewRotation(cam.lat, cam.lon);
+    R3 = viewRotation(cam.lat, cam.lon, opts.tilt);
     Rinv = transpose3(R3);
 
     if (mode === '3d') {
@@ -1207,6 +1222,15 @@
   document.getElementById('tg-meridians').addEventListener('change', function () { opts.meridians = this.checked; dirty = true; });
   document.getElementById('tg-parallels').addEventListener('change', function () { opts.parallels = this.checked; dirty = true; });
   document.getElementById('tg-labels').addEventListener('change', function () { opts.names = this.checked; build2D(); dirty = true; });
+  // 地轴倾斜：图例那行跟着改，免得写着 23.5° 而画的是竖直的（改之前就是这样对不上）
+  function syncAxisLegend() {
+    var el = document.getElementById('lg-axis');
+    if (el) el.textContent = opts.tilt ? '地轴（倾斜 23.5°）' : '地轴（竖直）';
+  }
+  document.getElementById('tg-tilt').addEventListener('change', function () {
+    opts.tilt = this.checked; syncAxisLegend(); dirty = true;
+  });
+  syncAxisLegend();
   document.getElementById('grid-step').addEventListener('change', function () {
     opts.step = Number(this.value); build2D(); dirty = true;
   });
