@@ -3,10 +3,10 @@
     <!-- ============ 根目录未配置：引导（管理员可去设置页配置） ============ -->
     <div v-if="!cfg.root_ok" class="card vc-empty">
       <div class="ph">
-        🎞 视频中心<br>
-        <b>{{ cfg.root ? '视频目录不可访问：' + cfg.root : '尚未配置人工智能视频路径' }}</b>
+        🎞 影视<br>
+        <b>{{ cfg.root ? '视频目录不可访问：' + cfg.root : '尚未配置视频路径' }}</b>
         <div style="font-size:12px">
-          {{ isAdmin ? '到「设置 → 人工智能视频路径」填写 NAS 目录后即可浏览播放' : '请联系管理员在「设置」页的「人工智能视频路径」配置视频目录' }}
+          {{ isAdmin ? '到「设置 → 视频路径」填写 NAS 目录后即可浏览播放' : '请联系管理员在「设置」页的「视频路径」配置视频目录' }}
         </div>
       </div>
     </div>
@@ -14,7 +14,7 @@
     <!-- ============ 主界面：左目录树 + 右播放器（无学年/学科、无文档预览、无注意力点检） ============ -->
     <div v-else class="vc-body">
       <div class="vc-head">
-        <span class="cur">🎞 视频中心</span>
+        <span class="cur">🎞 影视</span>
         <!-- 通道指示：配置了本地直连才显示，让「现在走哪条路」一眼可见 -->
         <span v-if="channel === 'local'" class="lb ok" title="视频正从局域网直连读取（更快）">⚡ 本地直连</span>
         <span v-else-if="channel === 'net'" class="lb" title="本地地址不可达，已回落当前公网地址">公网通道</span>

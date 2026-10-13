@@ -1326,6 +1326,44 @@ CREATE TABLE IF NOT EXISTS xiaozhi_agent_log (
   ms INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_xiaozhi_agent_log_ts ON xiaozhi_agent_log(ts);
+-- Home Assistant 接入（v1.14.0，主库——全家共享实例）：HA 自动化 webhook 反调流水 + 语音/面板
+-- 控制留痕（source: hook/control）。只登记事件与推送 SSE，不执行任何动作；超量由 service 写入时清最老。
+CREATE TABLE IF NOT EXISTS ha_event_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'hook',   -- hook=HA 回调 / control=工作台控制留痕
+  title TEXT DEFAULT '',
+  message TEXT DEFAULT '',
+  payload TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_ha_event_log_ts ON ha_event_log(ts);
+-- 音乐中心（v1.16.0，主库——家庭共享曲库）：mc_tracks 存扫描结果（path=根内相对路径、正斜杠），
+-- has_cover 1=内嵌封面已抽到 data/mc/covers/<id>.jpg / 2=用目录 cover 图 / 0=无封面；
+-- lyrics+lyrics_synced+lyrics_ok 为 LRCLIB 歌词缓存（ok=1 命中过不再外网请求）。
+CREATE TABLE IF NOT EXISTS mc_tracks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL UNIQUE,
+  title TEXT DEFAULT '',
+  artist TEXT DEFAULT '',
+  album TEXT DEFAULT '',
+  duration_ms INTEGER DEFAULT 0,
+  has_cover INTEGER DEFAULT 0,
+  meta_ver INTEGER DEFAULT 0, -- 解析器版本（v1.16.7 加：小于当前版本的行下次扫描强制重解析，见 db.js 的 addCol 注释）
+  lyrics TEXT DEFAULT '',
+  lyrics_synced INTEGER DEFAULT 0,
+  lyrics_ok INTEGER DEFAULT 0,
+  size INTEGER DEFAULT 0,
+  mtime INTEGER DEFAULT 0,
+  scanned_at INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mc_tracks_path ON mc_tracks(path);
+-- 个人收藏（按 user_id+track_id 唯一，toggle 即插删；排序用隐式 rowid）
+CREATE TABLE IF NOT EXISTS mc_favorites (
+  user_id INTEGER NOT NULL,
+  track_id INTEGER NOT NULL,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  UNIQUE(user_id, track_id)
+);
 -- 家庭与子女（按 family 共享开关路由：开=读主库全员共用，关=读各租户库独立）
 -- 结构与租户库同名表一致（routedDb 选库，两边共用同一份 DDL 定义见上方业务表）
 CREATE TABLE IF NOT EXISTS family_items (
@@ -1892,6 +1930,11 @@ addCol(db, 'vibe_records', 'from_notes', 'INTEGER DEFAULT 0');
 // 任务引擎路由（v1.6.0）：该任务由哪套客户端引擎领取——vibeasr=1.5B BitNet 纯CPU | vibe7b=7B vLLM(WSL2+显卡)；
 // 老任务/老 sidecar 无此概念，NULL 与空串一律按 vibeasr 兜底（向后兼容）
 addCol(db, 'vibe_jobs', 'engine', "TEXT DEFAULT 'vibeasr'");
+// 音乐标签解析器版本（v1.16.7）：v2 起 ID3/ilst/VorbisComment 的文本解码带 GBK 容错
+// （老中文 mp3 常把 GBK 字节标成 ISO-8859-1 → 旧解析器出「ÐÂÀÏÂÞÓïÂ¼」乱码）。
+// 扫描时 meta_ver !== 当前版本的文件会强制重解析一遍（mtime/size 没变也重来），
+// 这样用户点一次「重新扫描」乱码就自愈，无需动文件。
+addCol(db, 'mc_tracks', 'meta_ver', 'INTEGER DEFAULT 0');
 // engine 列就位后再建索引（旧库列是 addCol 补的，索引不能随主 DDL 建，否则列未就绪时启动会崩）
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_vibe_jobs_pending2 ON vibe_jobs(status, engine, id)'); } catch {}
 // 存量回填：老记录的 test_id/test_title/summary 从档案 JSON 带出（每次启动只处理空列行，幂等）

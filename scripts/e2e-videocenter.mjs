@@ -1,4 +1,4 @@
-// e2e：智能家居 → 视频中心 tab（v1.9.26）——vstudy 的精简复制版
+// e2e：人工智能 → 影视 tab（v1.9.26 建「视频中心」，v1.16.1 改名「影视」）——vstudy 的精简复制版
 // 覆盖：scope 双目录隔离（vc_root 与 vstudy_root 互不影响）/ 树只列目录+媒体 / Range 206（前缀+后缀区间）/
 //       越界与 416 / 进度 upsert + 断点续播查询 / 设置 admin-only / extplayer 与视频教学同一份脚本 /
 //       tab 权限矩阵（成员无 videocenter 403，授权后放行）/ ?token= beacon 通道 / UI（tab 渲染 + 树 + 点击播放 + 外部播放器按钮行）。
@@ -181,7 +181,7 @@ try {
     p.on('pageerror', (e) => perr.push(String(e).slice(0, 120)));
     p.on('dialog', (d) => { d.dismiss().catch(() => {}); }); // 「复制直链」等操作会弹 alert，自动关掉别卡住
 
-    // 成员（未授权时）：看不到「视频中心」tab 按钮——m1 已在 API 段被授权，这里另建 m2 保持未授权态
+    // 成员（未授权时）：看不到「影视」tab 按钮——m1 已在 API 段被授权，这里另建 m2 保持未授权态
     await api('POST', '/api/users', { token: T, body: { username: 'm2', password: 'm2-pass-123', role: 'user', allowed_pages: ['smarthome'], allowed_tabs: { smarthome: ['mijia'] } } });
     const m2lg = await api('POST', '/api/auth/login', { body: { username: 'm2', password: 'm2-pass-123' } });
     const M2T = m2lg.j.b?.token || m2lg.j.token;
@@ -193,7 +193,7 @@ try {
     const pm = await ctxM.newPage();
     await pm.goto(`${B}/#/smart-home`);
     await pm.waitForSelector('.tabs button');
-    ok((await pm.locator('.tabs button', { hasText: '视频中心' }).count()) === 0, '未授权成员：tab 栏无「视频中心」按钮');
+    ok((await pm.locator('.tabs button', { hasText: '影视' }).count()) === 0, '未授权成员：tab 栏无「影视」按钮');
     await ctxM.close();
     // 授权后（上面 PUT 已加 videocenter）：按钮出现
     // 注意：前端从登录时写进 localStorage 的 wb_user 读 allowed_tabs，必须**重新登录**拿新对象——
@@ -207,7 +207,7 @@ try {
     }, [MT2, JSON.stringify(mlg2.j.user || mlg2.j.b?.user)]);
     await pm2.goto(`${B}/#/smart-home`);
     await pm2.waitForSelector('.tabs button');
-    ok((await pm2.locator('.tabs button', { hasText: '视频中心' }).count()) === 1, '授权后成员：tab 按钮出现');
+    ok((await pm2.locator('.tabs button', { hasText: '影视' }).count()) === 1, '授权后成员：tab 按钮出现');
     await pm2.context().close();
 
     // 管理员：直达 ?tab=videocenter，树自动展开

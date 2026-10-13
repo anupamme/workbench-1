@@ -101,15 +101,84 @@
         </div>
       </div>
 
-      <!-- 智能家居视频路径（v1.9.26）：智能家居页「视频中心」tab 的根目录（与学习页视频教学的目录各自独立） -->
+      <!-- 视频路径（v1.9.26 建，v1.16.0 由「人工智能视频路径」改名）：人工智能页「视频中心」tab 的根目录 -->
       <div class="card" v-if="isAdmin">
-        <h3>人工智能视频路径</h3>
+        <h3>视频路径</h3>
         <div class="muted" style="font-size:12px; margin-bottom:8px">「人工智能 → 视频中心」tab 浏览播放此目录里的视频/音频（mp4 · flv · mp3 等，支持 PotPlayer/VLC 外部播放器联动）。与「学习 → 视频教学」的学习目录互不影响。Docker/NAS 部署：填容器内路径（先把 NAS 目录映射进容器，如宿主机 /vol2/1000/家庭视频 映射为 /videos 后填 /videos）；Windows 直跑填本机目录（如 D:\家庭视频）。</div>
         <div class="row">
           <input v-model="vcRoot.dir" placeholder="D:\家庭视频（Docker 填容器内路径，如 /videos）" class="grow" />
           <button class="primary" @click="saveVcRoot">保存路径</button>
         </div>
         <div v-if="vcRoot.ok === false" class="muted" style="font-size:12px; margin-top:8px; color:var(--red)">当前路径在服务器上不可访问，请核对后再保存</div>
+      </div>
+
+      <!-- 音乐路径（v1.16.0）：人工智能页「音乐」tab 的根目录；短路径自动映射 NAS 前缀（/音乐 → /vol2/1000/音乐） -->
+      <div class="card" v-if="isAdmin">
+        <h3>音乐路径</h3>
+        <div class="muted" style="font-size:12px; margin-bottom:8px">「人工智能 → 音乐」tab 扫描此目录里的歌曲（mp3 · flac · m4a · wav 等，自动读内嵌封面/歌名/歌手/专辑，歌词联网 LRCLIB 免费匹配）。NAS 部署可只填短路径（填 /音乐 即自动尝试 /vol2/1000/音乐 与 /vol1/1000/音乐，前提是该目录已映射进容器或同路径挂载）；Windows 直跑填本机目录（如 D:\音乐）。</div>
+        <div class="row">
+          <input v-model="mcRoot.dir" placeholder="/音乐（NAS 短路径）或 D:\音乐（Windows 直跑）" class="grow" />
+          <button class="primary" @click="saveMcRoot">保存路径</button>
+        </div>
+        <div v-if="mcRoot.ok === false" class="muted" style="font-size:12px; margin-top:8px; color:var(--red)">当前路径在服务器上不可访问（保存时会自动尝试 /vol2/1000 与 /vol1/1000 前缀），请核对后再保存</div>
+      </div>
+
+      <!-- 音乐海报（v1.16.1，仅管理员）：封面来源优先级 + 目录封面文件名 + 全屏播放页背景 -->
+      <div class="card" v-if="isAdmin">
+        <h3>音乐海报</h3>
+        <div class="muted" style="font-size:12px; margin-bottom:10px">音乐封面的取法与全屏播放页（点悬浮条唱片进的那页）的背景。改完到「人工智能 → 音乐」点「重新扫描」才会按新优先级重挑封面。</div>
+
+        <div class="row" style="align-items:flex-start; gap:12px; flex-wrap:wrap">
+          <div style="flex:1; min-width:260px">
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px">封面优先级</div>
+            <label style="display:flex; align-items:flex-start; gap:6px; font-size:13px; cursor:pointer">
+              <input v-model="mcPoster.cover_priority" type="radio" value="embed" style="width:auto; margin-top:3px" />
+              <span>优先内嵌封面<span class="muted" style="font-size:12px">（歌曲文件里自带的图，抓出来存到 data/mc/covers）</span></span>
+            </label>
+            <label style="display:flex; align-items:flex-start; gap:6px; font-size:13px; cursor:pointer; margin-top:6px">
+              <input v-model="mcPoster.cover_priority" type="radio" value="dir" style="width:auto; margin-top:3px" />
+              <span>优先目录封面<span class="muted" style="font-size:12px">（同目录下的 cover.jpg 等手工图）</span></span>
+            </label>
+          </div>
+          <div style="flex:1; min-width:260px">
+            <div style="font-size:13px; font-weight:600; margin-bottom:4px">全屏播放页背景</div>
+            <select v-model="mcPoster.full_bg" style="width:100%">
+              <option value="color">跟随封面主色（默认）</option>
+              <option value="dark">纯深色（不取封面颜色）</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="font-size:13px; font-weight:600; margin:12px 0 4px">目录封面文件名</div>
+        <textarea v-model="mcPoster.cover_names" rows="2" class="grow" style="width:100%; font-family:inherit"
+          :placeholder="mcPoster.cover_names_default"></textarea>
+        <div class="muted" style="font-size:12px; margin-top:4px">
+          逗号或空格分隔，不区分大小写；留空用默认：<code>{{ mcPoster.cover_names_default }}</code>
+        </div>
+
+        <div class="row" style="margin-top:10px">
+          <button class="primary" :disabled="mcPosterSaving" @click="saveMcPoster">{{ mcPosterSaving ? '保存中…' : '保存海报设置' }}</button>
+        </div>
+      </div>
+
+      <!-- 歌词 API（v1.16.1，仅管理员）：歌词服务地址 + 连通测试 + 缓存清理 -->
+      <div class="card" v-if="isAdmin">
+        <h3>歌词 API</h3>
+        <div class="muted" style="font-size:12px; margin-bottom:8px">
+          播放时按「歌名 + 歌手」联网取同步歌词，结果缓存进曲库（下次播同一首不再联网）。默认用 LRCLIB（免费、无需 Key、允许跨域）。自建歌词服务时填自己的地址，接口约定：<code>GET {地址}/api/get?artist=&amp;track=&amp;duration=</code> 与 <code>GET {地址}/api/search?q=</code>（LRCLIB 兼容形状）。
+          当前生效来源：<b>{{ mcLyrics.sourceText }}</b> · 已缓存 {{ mcLyrics.cached }} 首
+        </div>
+        <div class="row">
+          <input v-model="mcLyrics.api" placeholder="https://lrclib.net（留空 = 用默认）" class="grow" />
+          <button class="small" :disabled="mcLyrics.testing" @click="testMcLyrics">{{ mcLyrics.testing ? '测试中…' : '测连通' }}</button>
+          <button class="primary" :disabled="mcLyrics.saving" @click="saveMcLyrics">{{ mcLyrics.saving ? '保存中…' : '保存' }}</button>
+        </div>
+        <div v-if="mcLyrics.testMsg" class="muted" style="font-size:12px; margin-top:8px"
+          :style="{ color: mcLyrics.testOk === false ? 'var(--red)' : (mcLyrics.testOk ? 'var(--green, #3aa76d)' : 'var(--muted)') }">{{ mcLyrics.testMsg }}</div>
+        <div class="row" style="margin-top:10px; align-items:center; gap:8px">
+          <button class="small" :disabled="mcLyrics.clearing" @click="clearMcLyrics">{{ mcLyrics.clearing ? '清理中…' : '清空歌词缓存' }}</button>
+          <span class="muted" style="font-size:12px">改了地址或想重挑歌词时用；下次播到那首会重新联网匹配</span>
+        </div>
       </div>
 
       <!-- 视频学习检查（v1.13.4，仅管理员）：两个开关各自独立、互不联动（v1.13.9 起拆开） -->
@@ -609,6 +678,7 @@ onMounted(async () => {
   try { const ur = await api.get('/settings/upload-root'); uploadRoot.value = { dir: ur.dir || '' }; } catch {}
   try { const lb = await api.get('/settings/local-base'); localBase.value = { base: lb.base || '' }; } catch {}
   try { if (isAdmin.value) { const vc = await api.get('/vc/config'); vcRoot.value = { dir: vc.root || '', ok: !!vc.root_ok }; } } catch {}
+  try { if (isAdmin.value) { const mc = await api.get('/mc/config'); mcRoot.value = { dir: mc.root || '', ok: !!mc.root_ok }; applyMcCfg(mc); } } catch {}
   try { if (isAdmin.value) { const chk = await api.get('/settings/vstudy-check'); vstudyCheck.value = { enabled: !!chk.enabled, camEnabled: !!chk.cam_enabled, camInterval: Number(chk.cam_interval_min) || 3 }; } } catch {}
   try { if (isAdmin.value) { const la = await api.get('/settings/lan-addrs'); lanAddrs.value = la.addrs || []; } } catch {}
   try { if (isAdmin.value) { const dl = await api.get('/dingtalk/login-config'); ddLogin.value = { corp_id: dl.corp_id || '', app_key: dl.app_key || '', app_secret: dl.app_secret || '' }; } } catch {}
@@ -815,15 +885,103 @@ async function saveVstudyCheck() {
   savingCheck.value = false;
 }
 
-// 智能家居视频路径（v1.9.26，仅管理员）：智能家居页「视频中心」tab 的根目录，与视频教学目录独立
+// 视频路径（v1.9.26 建「人工智能视频路径」，v1.16.0 改名）：人工智能页「视频中心」tab 的根目录，与视频教学目录独立
 const vcRoot = ref({ dir: '', ok: null });
 async function saveVcRoot() {
   try {
     await api.post('/vc/settings', { root: vcRoot.value.dir.trim() });
     const c = await api.get('/vc/config');
     vcRoot.value.ok = c.root_ok;
-    flash(c.root_ok ? '人工智能视频路径已保存：' + c.root : (vcRoot.value.dir ? '已保存，但该路径当前在服务器上不可访问（Docker 部署需填容器内路径）' : '已清空，「视频中心」tab 将提示未配置'));
+    flash(c.root_ok ? '视频路径已保存：' + c.root : (vcRoot.value.dir ? '已保存，但该路径当前在服务器上不可访问（Docker 部署需填容器内路径）' : '已清空，「视频中心」tab 将提示未配置'));
   } catch (e) { flash('保存失败：' + e.message, 'err'); }
+}
+
+// 音乐路径（v1.16.0，仅管理员）：人工智能页「音乐」tab 的根目录；保存时服务端自动试 /vol2/1000、/vol1/1000 前缀
+const mcRoot = ref({ dir: '', ok: null });
+async function saveMcRoot() {
+  try {
+    const r = await api.post('/mc/settings', { root: mcRoot.value.dir.trim() });
+    mcRoot.value.ok = !!r.root_ok;
+    applyMcCfg(r);
+    flash(r.root_ok ? '音乐路径已保存：' + r.root + '（实际目录 ' + r.resolved + '），到「人工智能 → 音乐」点「重新扫描」即可听歌' : '已清空，「音乐」tab 将提示未配置');
+  } catch (e) { flash('保存失败：' + (e.message || ''), 'err'); mcRoot.value.ok = false; }
+}
+
+// ---------- 音乐海报 + 歌词 API（v1.16.1，仅管理员）----------
+// 后端 GET /mc/config 与 POST /mc/settings 的 poster/lyrics 块是唯一数据源，两个卡共用这一处回填。
+const mcPoster = ref({ cover_names: '', cover_names_default: '', cover_priority: 'embed', full_bg: 'color' });
+const mcPosterSaving = ref(false);
+const mcLyrics = ref({ api: '', api_default: '', source: 'default', sourceText: '', cached: 0, saving: false, testing: false, clearing: false, testMsg: '', testOk: null });
+const MC_SOURCE_TEXT = { setting: '设置页自定义地址', env: '环境变量 MC_LRCLIB_BASE', default: '内置默认（LRCLIB）' };
+function applyMcCfg(c) {
+  const p = c?.poster || {};
+  mcPoster.value = {
+    cover_names: p.cover_names || '',
+    cover_names_default: p.cover_names_default || '',
+    cover_priority: p.cover_priority === 'dir' ? 'dir' : 'embed',
+    full_bg: p.full_bg === 'dark' ? 'dark' : 'color',
+  };
+  const l = c?.lyrics || {};
+  mcLyrics.value = {
+    ...mcLyrics.value,
+    api: l.api_custom || '',       // 输入框只显示自定义值；留空 = 用默认/env
+    api_default: l.api_default || '',
+    source: l.api_source || 'default',
+    sourceText: (MC_SOURCE_TEXT[l.api_source] || '内置默认') + (l.api && l.api_source !== 'setting' ? '：' + l.api : ''),
+    cached: Number(l.cached) || 0,
+    testMsg: '', testOk: null,
+  };
+}
+async function saveMcPoster() {
+  mcPosterSaving.value = true;
+  try {
+    const r = await api.post('/mc/settings', {
+      cover_names: mcPoster.value.cover_names.trim(),
+      cover_priority: mcPoster.value.cover_priority,
+      full_bg: mcPoster.value.full_bg,
+    });
+    applyMcCfg(r);
+    flash('海报设置已保存，到「人工智能 → 音乐」点「重新扫描」按新优先级重挑封面');
+  } catch (e) { flash('保存失败：' + (e.message || ''), 'err'); }
+  mcPosterSaving.value = false;
+}
+async function saveMcLyrics() {
+  mcLyrics.value.saving = true;
+  try {
+    const r = await api.post('/mc/settings', { lyrics_api: mcLyrics.value.api.trim() });
+    applyMcCfg(r);
+    flash(mcLyrics.value.api.trim() ? '歌词 API 已保存：' + mcLyrics.value.api.trim() : '已改回默认歌词服务（LRCLIB）');
+  } catch (e) { flash('保存失败：' + (e.message || ''), 'err'); }
+  mcLyrics.value.saving = false;
+}
+async function testMcLyrics() {
+  mcLyrics.value.testing = true;
+  mcLyrics.value.testMsg = '正在从服务器侧探测…';
+  mcLyrics.value.testOk = null;
+  try {
+    const r = await api.post('/mc/lyrics/test', { api: mcLyrics.value.api.trim() });
+    if (r.ok) {
+      mcLyrics.value.testOk = true;
+      mcLyrics.value.testMsg = `连通正常：${r.tried} 用时 ${r.ms} ms，返回 ${r.hits} 条结果`;
+    } else {
+      mcLyrics.value.testOk = false;
+      mcLyrics.value.testMsg = `连不上：${r.tried || ''} ${r.error || '未知错误'}`;
+    }
+  } catch (e) {
+    mcLyrics.value.testOk = false;
+    mcLyrics.value.testMsg = '测试失败：' + (e.message || '');
+  }
+  mcLyrics.value.testing = false;
+}
+async function clearMcLyrics() {
+  if (!window.confirm('清空已缓存的所有歌词？下次播到那首会重新联网匹配（不影响歌曲与收藏）。')) return;
+  mcLyrics.value.clearing = true;
+  try {
+    const r = await api.post('/mc/lyrics/clear');
+    mcLyrics.value.cached = Number(r.cached) || 0;
+    flash(`已清空歌词缓存（清理 ${r.cleared || 0} 首）`);
+  } catch (e) { flash('清空失败：' + (e.message || ''), 'err'); }
+  mcLyrics.value.clearing = false;
 }
 
 // 钉钉免登（全局参数仅管理员可配；解绑本人绑定人人可用）

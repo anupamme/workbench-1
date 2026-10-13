@@ -8,13 +8,17 @@
       <!-- LLM在线模型（v1.12.4）：原独立「AI 助手」页整页并入，AiChat 组件原样作本 tab 内容 -->
       <button v-if="canTab('smarthome','llm')" :class="{active: tab==='llm'}" @click="switchTab('llm')">LLM在线模型</button>
       <button v-if="canTab('smarthome','xiaozhi')" :class="{active: tab==='xiaozhi'}" @click="switchTab('xiaozhi')">智能板</button>
+      <!-- Home Assistant（v1.14.0）：HA 实例接入——连接配置/实体一览/服务调试/webhook 事件 + 语音设备来源开关 -->
+      <button v-if="canTab('smarthome','ha')" :class="{active: tab==='ha'}" @click="switchTab('ha')">HomeAssistant</button>
       <!-- Agent红绿灯（v1.8.1 起为本页子 tab；v1.9.22 曾升格独立页，v1.9.23 放回智能板之后） -->
       <button v-if="canTab('smarthome','cclight')" :class="{active: tab==='cclight'}" @click="switchTab('cclight')">Agent红绿灯</button>
       <button v-if="canTab('smarthome','settings')" :class="{active: tab==='settings'}" @click="switchTab('settings')">米家设置</button>
       <!-- 参数翻译（v1.9.24 更名「米家参数翻译」并移到米家设置之后） -->
       <button v-if="canTab('smarthome','terms')" :class="{active: tab==='terms'}" @click="switchTab('terms')">米家参数翻译</button>
-      <!-- 视频中心（v1.9.26）：本页最后一个 tab——视频教学的精简版（目录树+播放+进度记忆，无学年学科/点检/文档） -->
-      <button v-if="canTab('smarthome','videocenter')" :class="{active: tab==='videocenter'}" @click="switchTab('videocenter')">视频中心</button>
+      <!-- 视频中心（v1.9.26；v1.16.1 改名「影视」）：视频教学的精简版（目录树+播放+进度记忆，无学年学科/点检/文档） -->
+      <button v-if="canTab('smarthome','videocenter')" :class="{active: tab==='videocenter'}" @click="switchTab('videocenter')">影视</button>
+      <!-- 音乐（v1.16.0，本页最后一个 tab）：NAS 曲库 + 底部悬浮播放条（跨页不断播） -->
+      <button v-if="canTab('smarthome','music')" :class="{active: tab==='music'}" @click="switchTab('music')">音乐</button>
     </div>
 
     <div v-if="err" class="msg err">{{ err }}</div>
@@ -108,11 +112,17 @@
     <!-- ==================== 智能板 tab（v1.9.11：小智 Korvo2V3 装机/唤醒词/语音控米家） ==================== -->
     <XiaozhiPanel v-else-if="tab==='xiaozhi'" />
 
+    <!-- ==================== HomeAssistant tab（v1.14.0）：连接配置/实体一览/服务调试/事件流 ==================== -->
+    <HaPanel v-else-if="tab==='ha'" />
+
     <!-- ==================== Agent红绿灯 tab（v1.9.23 放回本页：功能介绍/下载安装包/安装步骤三段，见 CcLightPanel） ==================== -->
     <CcLightPanel v-else-if="tab==='cclight'" />
 
-    <!-- ==================== 视频中心 tab（v1.9.26，本页最后一个 tab） ==================== -->
+    <!-- ==================== 视频中心 tab（v1.9.26） ==================== -->
     <VideoCenterPanel v-else-if="tab==='videocenter'" />
+
+    <!-- ==================== 音乐 tab（v1.16.0，本页最后一个 tab）：曲库 + 底部悬浮播放条入口 ==================== -->
+    <MusicPanel v-else-if="tab==='music'" />
 
     <!-- ==================== 设置 tab ==================== -->
     <template v-else-if="tab==='settings'">
@@ -345,12 +355,14 @@ import { api } from '../api';
 import QRCode from 'qrcode';
 import { zh, TERM_GROUPS } from '../miotTerms';
 import XiaozhiPanel from '../components/XiaozhiPanel.vue';
+import HaPanel from '../components/HaPanel.vue';
 import DhPanel from '../components/DhPanel.vue';
 // v1.12.4：原独立「AI 助手」页整页并入本页 llm 子 tab（静态引进 → 打进 SmartHome 分块；
 // /ai 旧地址在 router 重定向到 /smart-home?tab=llm）
 import AiChat from './AiChat.vue';
 import CcLightPanel from '../components/CcLightPanel.vue';
 import VideoCenterPanel from '../components/VideoCenterPanel.vue';
+import MusicPanel from '../components/MusicPanel.vue';
 
 // 布局（v2.0.0）：'tabs' = 主工作台里的页内 tab 条（原样）；
 // 'sidebar' = 智能家居独立应用（ShApp.vue 左侧栏驱动同一个 tab，本页不再画 tab 条）。

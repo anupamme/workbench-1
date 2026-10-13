@@ -118,8 +118,13 @@ try {
 
   await p.goto(`${B}/#/smart-home?tab=cclight`);
   await p.waitForSelector('.page-title');
-  ck('C1 智能家居页 6 个 tab（v1.9.26 起末尾多「视频中心」），Agent红绿灯在智能板之后', (await p.locator('h2.page-title').innerText()) === '智能家居'
-    && (await p.locator('.tabs button').allInnerTexts()).join('|') === '米家|智能板|Agent红绿灯|米家设置|米家参数翻译|视频中心', await p.locator('.tabs').innerText());
+  // 页签是拿到授权后异步渲染的，page-title 先出现——等到最后一个页签「音乐」出现再断言
+  //（曾经只等 .page-title 就取样，A/B 基线显示那时页签条只渲染出了第一个「米家」）
+  await p.waitForFunction(() => [...document.querySelectorAll('.tabs button')].some((b) => b.textContent.trim() === '音乐'), null, { timeout: 8000 });
+  // v1.12.0/1.12.4（数字人、LLM在线模型并入，页面改名「人工智能」）、v1.14.0 加 HomeAssistant、
+  // v1.16.0 加「音乐」、v1.16.1「视频中心」改名「影视」
+  ck('C1 人工智能页 10 个 tab（v1.16.1 起「视频中心」改名「影视」），Agent红绿灯在智能板之后', (await p.locator('h2.page-title').innerText()) === '人工智能'
+    && (await p.locator('.tabs button').allInnerTexts()).map((t) => t.trim()).join('|') === '米家|数字人|LLM在线模型|智能板|HomeAssistant|Agent红绿灯|米家设置|米家参数翻译|影视|音乐', await p.locator('.tabs').innerText());
   ck('C2 Agent红绿灯按钮处于激活态', (await p.locator('.tabs button.active').innerText()) === 'Agent红绿灯');
 
   await p.waitForSelector('.ccp-tabs button');

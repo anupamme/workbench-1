@@ -102,6 +102,8 @@ function pageForPath(p) {
   if (p.startsWith('/vstudy')) return 'learning'; // 视频教学（目录/播放/记录/设置/学时流水）归学习页
   // 视频中心（v1.9.26）：vstudy 的精简版（无学年学科/学时/注意力），归智能家居页 videocenter tab
   if (p.startsWith('/vc')) return 'smarthome';
+  // 音乐中心（v1.16.0）：/mc 整块（曲库/扫描/流播/封面/收藏/歌词）归智能家居页 music tab
+  if (p.startsWith('/mc')) return 'smarthome';
   if (p.startsWith('/clipboard') || p.startsWith('/links')) return 'tools';
   // mbti/dep/pro 测试中心接口 v1.8.0 已随「私有项目」页卸载（迁至独立项目 Private_Mini），不再映射
   if (p.startsWith('/monitor')) return 'tools'; // Computer monitoring (v1.3.5): Tools page last tab, bound to tools page permission (otherwise any logged-in user could read screenshots)
@@ -115,6 +117,9 @@ function pageForPath(p) {
   if (p.startsWith('/xiaozhi')) return 'smarthome';
   // 数字人（v1.12.0）：归智能家居页 dh tab（角色注册表/参考图/历史对话/试聊/Vivix 预览与连通测试）
   if (p.startsWith('/dh')) return 'smarthome';
+  // Home Assistant（v1.14.0）：归智能家居页 ha tab。⚠️ 不能写 startsWith('/ha')——/health 也会被
+  // 吃进去；必须精确段匹配（/ha 全等或 /ha/ 开头）。/ha/hook 在 index.js EXEMPT，不经过这里。
+  if (p === '/ha' || p.startsWith('/ha/')) return 'smarthome';
   // 业务系统改名「推送任务」并入效率工具页（2026-09 v1.7.0）
   if (p.startsWith('/business')) return 'tools';
   // AI 助手（v1.12.4）整页并入「人工智能」页 llm 子 tab（改名「LLM在线模型」）。
@@ -258,6 +263,9 @@ const TAB_PATHS = {
     ['llm', ['/ai']],
     ['terms', []],
     ['xiaozhi', ['/xiaozhi']],
+    // Home Assistant（v1.14.0）：/ha 整块（配置/实体/控制/摄像头/事件流）；
+    // 配置与服务调试在路由内再限管理员。漏这行 = 落 null=仅需登录（v1.9.9 教训同款）。
+    ['ha', ['/ha']],
     // Agent红绿灯（v1.9.23 放回本页）：/cclight 文件清单/单文件/打包下载整块归这一个 tab；
     // 面板内 功能介绍/下载安装包/安装步骤 三段为纯 UI 子页，无独立权限键
     ['cclight', ['/cclight']],
@@ -265,6 +273,9 @@ const TAB_PATHS = {
     // 视频中心（v1.9.26）：本页最后一个 tab——/vc 整块（tree/file/progress/extplayer/config/settings/fs-probe）；
     // 其中 /vc/settings 是全家配置，路由内部再限管理员（无 vstudy 那样的独立受限子 tab）
     ['videocenter', ['/vc']],
+    // 音乐中心（v1.16.0）：/mc 整块（config/settings/scan/tree/library/file/cover/favorites/lyrics）；
+    // /mc/settings 与 /mc/scan 是全家配置，路由内部再限管理员（与 /vc/settings 同款）
+    ['music', ['/mc']],
   ],
 };
 

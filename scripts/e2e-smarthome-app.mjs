@@ -65,7 +65,7 @@ try {
   }
   // JARVIS 自己那几个必须在（否则是砍过头）。
   // 视频中心的 /vc/tree 在没配视频根目录时回 400（根目录不存在），故判据是「不是 404」= 路由在。
-  for (const [p, label] of [['/api/mihome/status', '米家'], ['/api/xiaozhi/config', '智能板'], ['/api/cclight/files', '红绿灯'], ['/api/vc/tree?path=/', '视频中心'], ['/api/messages/contacts', '用户选择器']]) {
+  for (const [p, label] of [['/api/mihome/status', '米家'], ['/api/xiaozhi/config', '智能板'], ['/api/cclight/files', '红绿灯'], ['/api/vc/tree?path=/', '视频中心'], ['/api/mc/config', '音乐'], ['/api/messages/contacts', '用户选择器']]) {
     const rr = await fetch(`${B}${p}`);
     ck(`A6 JARVIS 端点 ${p}（${label}）在`, rr.status !== 404 && rr.status !== 500, `status=${rr.status}`);
   }
@@ -101,9 +101,9 @@ try {
   ck('B1 打开就是应用外壳，没有被踢到登录页', (await p.locator('.sh-shell').count()) === 1 && !p.url().includes('login'), p.url());
   ck('B2 页面上没有登录表单', (await p.locator('input[type=password]').count()) === 0);
   const navTexts = (await p.locator('.sh-nav-item .sh-label').allInnerTexts()).map((t) => t.trim());
-  // v1.12.0/1.12.4 起智能家居页各 tab 都有增改（数字人、LLM在线模型并入），侧栏随之对齐，断言同步更新
-  ck('B3 左侧 8 个模块（与工作台智能家居页页签一一对应）',
-    navTexts.join('|') === '米家|数字人|LLM在线模型|智能板|Agent红绿灯|米家设置|米家参数翻译|视频中心', navTexts.join('|'));
+  // v1.12.0/1.12.4 起智能家居页各 tab 都有增改（数字人、LLM在线模型并入），侧栏随之对齐；v1.16.0 加「音乐」
+  ck('B3 左侧 9 个模块（与工作台智能家居页页签一一对应）',
+    navTexts.join('|') === '米家|数字人|LLM在线模型|智能板|Agent红绿灯|米家设置|米家参数翻译|影视|音乐', navTexts.join('|'));
   ck('B4 原来的页内 tab 条不再出现（已升格为侧栏）', (await p.locator('h2.page-title').count()) === 0 && (await p.locator('.tabs').count()) === 0);
   ck('B5 顶栏显示应用名与版本', (await p.locator('.sh-title').innerText()).includes('JARVIS') && (await p.locator('.sh-ver').count()) === 1, await p.locator('.sh-brand').innerText());
   await p.waitForFunction(() => { const el = document.querySelector('.sh-net'); return el && /在线|离线/.test(el.textContent); }, null, { timeout: 8000 });
@@ -148,9 +148,9 @@ try {
   const ccTxt = await p.evaluate(() => document.body.innerText);
   ck('C5 红绿灯安装页第①步也挂了同一个烧录包下载按钮', ccTxt.includes('下载本地烧录工具包'));
 
-  // 其余四个模块各自能渲染（不白屏）。按钮文字有前缀关系（「米家」是「米家设置」的子串），
-  // 必须 exact 匹配，否则 strict mode 一次命中三个按钮。
-  for (const label of ['米家', '米家设置', '米家参数翻译', '视频中心']) {
+  // 其余模块各自能渲染（不白屏）。按钮文字有前缀关系（「米家」是「米家设置」的子串），
+  // 必须 exact 匹配，否则 strict mode 一次命中多个按钮。
+  for (const label of ['米家', '米家设置', '米家参数翻译', '影视', '音乐']) {
     await p.getByRole('button', { name: label, exact: true }).click();
     await sleep(900);
     ck(`C6 「${label}」模块有内容渲染（不白屏）`, (await p.locator('.card').count()) > 0);

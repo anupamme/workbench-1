@@ -248,14 +248,16 @@ router.post('/xiaozhi/bridge', (req, res) => {
 });
 
 // ---------- 可控设备（面板预览用；走登录态不走 key；与「米家」tab 同源，fresh=1 强刷云端） ----------
+// v1.14.0：改吃合并语音设备表（米家 + Home Assistant，按 HA tab 的「设备来源」分流）——
+// 贾维斯（智能板）面板的设备卡与快捷开关自动带上 HA 实体，别名框直接可用。
 router.get('/xiaozhi/devices', asyncH(async (req, res) => {
   try {
-    const devices = await svc.listDevicesForBridge(req.query.fresh === '1', { includeParents: true }); // v1.9.25：面板也标注父设备（无开关）
+    const devices = await svc.listVoiceDevices(req.query.fresh === '1', { includeParents: true }); // v1.9.25：面板也标注父设备（无开关）
     // v1.9.17：家庭清单（默认家庭下拉用）随设备一起给，保持单一数据源
     const homes = [...new Set(devices.map((d) => d.home).filter(Boolean))];
     res.json({ bound: true, devices, homes });
   } catch (e) {
-    // 未绑定米家等：设备空着但别 500——面板要能区分「未绑定」和「绑了但没可控设备」
+    // 未绑定米家/未配 HA 等：设备空着但别 500——面板要能区分「未绑定」和「绑了但没可控设备」
     res.json({ bound: false, devices: [], homes: [], message: e.message });
   }
 }));
@@ -279,7 +281,7 @@ router.put('/xiaozhi/device-alias', asyncH(async (req, res) => {
   const alias = String(req.body?.alias || '').trim();
   if (alias) {
     let devices = [];
-    try { devices = await svc.listDevicesForBridge(); } catch { /* 未绑米家等：跳过交叉校验，仅做格式检查 */ }
+    try { devices = await svc.listVoiceDevices(); } catch { /* 未绑米家/未配 HA 等：跳过交叉校验，仅做格式检查 */ }
     const me = devices.find((d) => String(d.did) === did);
     if (me && normName(alias) === normName(me.name)) {
       return res.status(400).json({ error: `别名「${alias}」和设备本名相同——起不到消歧作用，请换一个不同的叫法` });

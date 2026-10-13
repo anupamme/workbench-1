@@ -134,6 +134,9 @@ export const TAB_DEFS = {
     { key: 'llm', label: 'LLM在线模型' },
     // 智能板（v1.9.11）：小智 Korvo2V3 语音板 = 装机向导 + 唤醒词编译烧录 + 语音控米家
     { key: 'xiaozhi', label: '智能板' },
+    // Home Assistant（v1.14.0）：HA 实例接入——连接配置(令牌)/实体一览/服务调试/webhook 事件；
+    // 「设备来源」决定数字人与智能板的语音控制走米家还是 HA（服务端 xiaozhiService.listVoiceDevices）
+    { key: 'ha', label: 'HomeAssistant' },
     // Agent红绿灯（v1.8.1 起的本页子 tab）：ESP32-C3 三色灯指示九家 AI Agent 状态；
     // 面板内部再分 功能介绍/下载安装包/安装步骤 三段（CcLightPanel，localStorage 记忆，无独立权限键）
     { key: 'cclight', label: 'Agent红绿灯' },
@@ -141,9 +144,12 @@ export const TAB_DEFS = {
     { key: 'settings', label: '米家设置' },
     // v1.9.24 更名「米家参数翻译」并移到米家设置之后（内容就是米家设备属性的中文对照维护）
     { key: 'terms', label: '米家参数翻译' },
-    // 视频中心（v1.9.26）：本页最后一个 tab——视频教学的精简版（目录树+播放+进度记忆/断点续播，
-    // 无学年学科/注意力点检/文档预览；目录在设置页「智能家居视频路径」配置）
-    { key: 'videocenter', label: '视频中心' },
+    // 影视（原「视频中心」，v1.9.26 建、v1.16.1 改名）：视频教学的精简版（目录树+播放+进度记忆/断点续播，
+    // 无学年学科/注意力点检/文档预览；目录在设置页「视频路径」配置）。tab key 仍叫 videocenter，不改权限键。
+    { key: 'videocenter', label: '影视' },
+    // 音乐（v1.16.0，本页最后一个 tab）：NAS 音乐目录曲库——统计卡+目录树+歌曲多列卡片，
+    // 点歌浮出底部播放条（跨页不断播）；目录在设置页「音乐路径」配置（短路径 /音乐 自动映射 /vol2/1000/音乐）
+    { key: 'music', label: '音乐' },
   ],
 };
 

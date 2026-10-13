@@ -325,8 +325,9 @@ function recentHistory(tdb, personaId, n) {
 // （dispatch('control') → resolveDevice → mihome.setProp，含别名接管 / 多候选追问 / 离线 /
 // 智能屏转述兜底），回复直接用回执原文，**不经模型转述**（转述正是失败被润成成功的源头）。
 async function tryDeviceControl(text) {
+  // v1.14.0：合并设备表（米家 + Home Assistant，按 HA tab 的「设备来源」开关分流）
   let devices = [];
-  try { devices = await xiaozhiSvc.listDevicesForBridge(); } catch { /* 未绑米家：交给 dispatch 回业务话术 */ }
+  try { devices = await xiaozhiSvc.listVoiceDevices(); } catch { /* 未绑米家/未配 HA：交给 dispatch 回业务话术 */ }
   const plan = planDeviceCommand(text, devices);
   if (!plan) return null;
   return xiaozhiSvc.dispatch('control', { device: plan.target, action: plan.action });

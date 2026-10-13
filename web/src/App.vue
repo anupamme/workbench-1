@@ -56,7 +56,13 @@
          空输入点搜索 = 进搜索页；带词回车/点按钮 = 进页并自动执行搜索。
          v1.12.0 起三段式：前面加「数字人」按钮（标签随默认数字人类型显示 AI男友/AI女友/AI萌宠），
          点开最外层页面右侧的手机模型浮层（DhPhone，不遮本搜索框）。 -->
-    <div v-if="canGlobalSearch || canDh || canLlm" class="float-search">
+    <!-- v1.16.0：音乐播放条浮起时整个右下角面板上移让位（否则盖住播放条右侧 音量/列表/歌词/收起 键） -->
+    <div v-if="canGlobalSearch || canDh || canLlm || canMusic" class="float-search" :class="{ 'bar-up': music.barOpen }">
+      <!-- v1.16.0：【音乐】按钮排在【AI助手】前面：打开/关闭底部悬浮播放条（打开关闭都从页面下方浮上来） -->
+      <button v-if="canMusic" class="float-ai" :title="music.barOpen ? '收起播放条' : '展开播放条'" @click="music.barOpen = !music.barOpen">
+        <span class="material-icons" style="font-size:14px;vertical-align:-2px">music_note</span>
+        音乐
+      </button>
       <!-- v1.12.4：【AI助手】按钮排在【AI女友】前面：直跳「人工智能 → LLM在线模型」tab -->
       <button v-if="canLlm" class="float-ai" title="AI 助手 · LLM在线模型" @click="goLlm">
         <span class="material-icons" style="font-size:14px;vertical-align:-2px">chat</span>
@@ -72,6 +78,11 @@
 
     <!-- 数字人手机模型浮层（v1.12.0）：最外层、页面最右侧、高度自适应视口、不遮右下角搜索框 -->
     <DhPhone v-if="dhState.phoneOpen" />
+
+    <!-- 音乐播放器（v1.16.0）：底部悬浮条 + 全屏满屏播放，musicState 单例跨页不断播；
+         组件内部各自 v-if（barOpen / fullOpen），这里常驻挂载即可 -->
+    <MusicBar />
+    <MusicFull />
 
     <!-- 升级自愈提示：常驻 webview（钉钉工作台等）里的旧前端检测到服务端已升级，提示后自动刷新加载新包 -->
     <div v-if="upgradeTip" class="upgrade-tip">⬆ {{ upgradeTip }}</div>
@@ -100,6 +111,9 @@ import { plainText } from './utils/rich';
 import { canTab } from './tabs';
 import { dhState, dhRefresh, dhLabel } from './dhState';
 import DhPhone from './components/DhPhone.vue';
+import MusicBar from './components/MusicBar.vue';
+import MusicFull from './components/MusicFull.vue';
+import { musicState as music } from './musicState';
 
 const router = useRouter();
 const route = useRoute();
@@ -340,6 +354,18 @@ function goLlm() {
   router.push({ path: '/smart-home', query: { tab: 'llm' } });
 }
 
+// ---------- 音乐（v1.16.0）：右下角【音乐】按钮开/关底部悬浮播放条 ----------
+// 权限 = 智能家居页的 music 子 tab（后端 TAB_PATHS.smarthome.music 守 /api/mc/*）
+const canMusic = computed(() => {
+  route.fullPath; userTick.value;
+  const u = user.value;
+  if (!u) return false;
+  if (u.role === 'admin') return true;
+  const allowed = u.allowed_pages || [];
+  if (allowed.length && !allowed.includes('smarthome')) return false;
+  return canTab('smarthome', 'music');
+});
+
 // ---------- 数字人（v1.12.0）：右下角按钮 + 手机浮层 ----------
 // 权限 = 智能家居页的 dh 子 tab（canTab 同源后端 TAB_PATHS）；没有搜索权限但 dh 有时也显示这一段
 const canDh = computed(() => {
@@ -416,7 +442,9 @@ function logout() {
    v1.12.0 三段式：数字人按钮在搜索框前面，同一块底板一体化（比搜索框略宽）。 */
 .float-search { position: fixed; right: 16px; bottom: 16px; z-index: 1150; display: flex; align-items: center; gap: 3px;
   background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 4px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25); }
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25); transition: bottom .28s ease; }
+/* 音乐播放条（约 66px 高）浮起时上移让位，与播放条同节奏滑上/滑下 */
+.float-search.bar-up { bottom: 86px; }
 .float-search input { border: none; background: transparent; color: var(--text); width: 160px; font-size: 12.5px;
   padding: 5px 8px; outline: none; border-radius: 7px; }
 .float-search input:focus { background: var(--bg3, rgba(0, 0, 0, 0.12)); }

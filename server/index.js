@@ -26,6 +26,8 @@ const mihomeRoutes = require('./routes/mihomeRoutes');
 const ccLightRoutes = require('./routes/ccLightRoutes');
 const xiaozhiRoutes = require('./routes/xiaozhiRoutes');
 const dhRoutes = require('./routes/dhRoutes');
+const haRoutes = require('./routes/haRoutes');
+const mcRoutes = require('./routes/mcRoutes'); // 音乐中心（v1.16.0）：/mc/*（曲库/扫描/流播/封面/收藏/歌词）
 const dhService = require('./services/dhService'); // 数字人参考图签名令牌校验（v1.12.1，鉴权中间件里用）
 const fnosRoutes = require('./routes/fnosRoutes');
 const authRoutes = require('./routes/authRoutes');
@@ -35,6 +37,7 @@ const noteRoutes = require('./routes/noteRoutes'); // 笔记知识系统（v1.9.
 const noteShareRoutes = require('./routes/noteShareRoutes'); // 笔记分享 + 外部写入令牌（v1.9.39）
 const lifeRoutes = require('./routes/lifeRoutes'); // 人生管理系统（v1.10.0）：所有 /life/* 的唯一所有者
 const imRoutes = require('./routes/imRoutes'); // IM 连接器（v1.10.5）：所有 /im/* 的唯一所有者（含免登回跳 /im/callback）
+const dbDiagRoutes = require('./routes/dbDiagRoutes'); // ⚠️ 临时：/dbdiag/* 只读诊断（定位 family_items 丢失），定位完删
 const imService = require('./services/imService'); // 启动时要用一次：IM 落地文件夹改版的一次性迁移（v1.10.14）
 const scheduler = require('./scheduler');
 const dingtalkStream = require('./services/dingtalkStreamService');
@@ -96,6 +99,7 @@ const EXEMPT = ['/auth/login', '/auth/fnos-login', '/health', '/tile', '/map-sta
   '/xiaozhi/firmware', // 智能板固件下载（v1.9.12：同一桥接密钥或管理员令牌，路由内自校验；无工具链环境从构建机代理）
   '/xiaozhi/photo', // 智能板照片上传（v1.9.17：固件 POST 二进制 JPEG，路由级 raw 解析 + 桥接密钥自校验）
   '/im/callback', // IM 连接器 OAuth 回跳（v1.10.5，飞书那边跳回来，没有工作台登录态；只认一次性 state）
+  '/ha/hook', // Home Assistant webhook 反调（v1.14.0：HA 自动化 RESTful 动作，key 即凭证，路由内自校验）
   '/pets/desktop', // 桌面宠物（key 即凭证：state/frame/action）
   '/share', '/note-intake']; // 笔记分享（token+4位码即凭证）/ 外部写入令牌（v1.9.39）。⚠️ 路由内一律 403/404，绝不 401
 app.use('/api', (req, res, next) => {
@@ -154,6 +158,8 @@ const SH_API_ALLOW = [
   '/messages/contacts', // 用户选择器数据源（misc.js 里的）
   '/mihome', '/cclight', '/xiaozhi', '/vc', '/flashtool',
   '/dh',                // 数字人（v1.12.0，智能家居第二个 tab）：角色注册表/参考图/历史/试聊/连通测试
+  '/ha',                // Home Assistant（v1.14.0）：实体一览/控制/摄像头/事件流（webhook 回调在 EXEMPT）
+  '/mc',                // 音乐（v1.16.0）：曲库/流播/封面/收藏/歌词——与 /vc 视频同级的家庭 NAS 共享媒体
 ];
 app.use('/api', (req, res, next) => {
   if (!SH_MODE) return next();
@@ -174,7 +180,9 @@ app.use('/api', mihomeRoutes);
 app.use('/api', ccLightRoutes);
 app.use('/api', xiaozhiRoutes);
 app.use('/api', dhRoutes); // 数字人（v1.12.0）：/dh/*（角色注册表/参考图/历史对话/Vivix 会话预览）
+app.use('/api', haRoutes); // Home Assistant（v1.14.0）：/ha/*（配置/实体/控制/摄像头/SSE/webhook 反调）
 app.use('/api', vstudyRoutes); // 视频中心（智能家居最后一个 tab）用的 /vc 接口
+app.use('/api', mcRoutes); // 音乐中心（v1.16.0）：智能家居「音乐」tab 的 /mc 接口
 app.use('/api', flashToolRoutes); // 本地烧录工具包（v2.0.0 新增）
 app.use('/api', desensitizeRoutes); // AI 数据脱敏（v1.13.0）：效率工具页「AI脱敏」tab 的配置/试运行/历史
 app.use('/api', fnosRoutes);
@@ -191,6 +199,7 @@ if (!SH_MODE) {
   app.use('/api', wishRoutes);
   app.use('/api', monitorRoutes);
   app.use('/api/ssl', sslRoutes);
+  app.use('/api', dbDiagRoutes); // ⚠️ 临时只读诊断（管理员专用），定位完即撤
 }
 
 // 小智官方 MCP 接入点（v1.9.31，通道 A）：默认关闭，用户在智能板配置页勾选才连。

@@ -20,6 +20,9 @@ const dingtalkService = require('./dingtalkService');
 // 工作台自带的那个飞书应用是另一个机器人，发到那边用户在自己的飞书里看不到。
 const weatherService = require('./weatherService');
 const { encrypt, decrypt } = require('./businessSkillService');
+// Home Assistant（v1.14.0）：语音设备表按「设备来源」合并米家与 HA，控制时按 backend 分流。
+// haService 只依赖 db/businessSkillService，不会反过来 require 本模块——环就死了。
+const ha = require('./haService');
 
 const CFG_KEY = 'xiaozhi_config';
 const KEY_KEY = 'xiaozhi_bridge_key';
@@ -176,6 +179,31 @@ async function listDevicesForBridge(fresh = false, opts = {}) {
   return out;
 }
 
+// ---------- 语音设备总表（v1.14.0）：按「设备来源」合并米家与 Home Assistant ----------
+// device_source 在 HA tab 配置：mihome=只走米家（默认，行为与旧版完全一致）/ ha=只走 HA /
+// both=两边合并。数字人（dhService.tryDeviceControl）、智能板桥接（dispatch）、智能板与
+// 数字人的设备面板（/xiaozhi/devices、/dh/smarthome/devices）全吃这张表——
+// 「语音控制走米家还是走 HA」就这一个开关，没有第二处配置。
+// HA 条目带 backend:'ha'（控制/查状态时先于米家 setProp 拦截）；别名表共用（entity_id 通过
+// setDeviceAlias 的 did 校验），namesOf 的「别名接管本名」对 HA 设备同样生效。
+async function listVoiceDevices(fresh = false, opts = {}) {
+  const src = ha.deviceSource();
+  if (src === 'mihome') return listDevicesForBridge(fresh, opts);
+  const out = [];
+  if (src === 'both') {
+    try { out.push(...await listDevicesForBridge(fresh, opts)); } catch { /* 未绑米家：HA 独挑 */ }
+  }
+  let haItems = [];
+  try { haItems = await ha.listVoiceDevices(fresh); }
+  catch (e) {
+    // HA 掉线/未配置只在「只走 HA」时向上抛（面板与语音都要真话术）；both 模式米家还能用，别拖垮
+    if (src === 'ha') throw e;
+  }
+  const aliases = getConfig().device_aliases || {};
+  for (const it of haItems) out.push({ ...it, alias: aliases[it.did] || null });
+  return out;
+}
+
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
 // 别名接管（v1.9.18）：登记了别名的设备只认别名，本名退出匹配——重名设备给其中一台起别名即可消歧
 const namesOf = (d) => (d.alias ? [d.alias] : [d.name]).filter(Boolean);
@@ -211,7 +239,7 @@ function ambiguous(list, raw) {
 // ---------- 开关控制：direct 走 setProp；无开关点位/失败时若配有智能屏则转述兜底 ----------
 async function controlDevice(query, action) {
   const act = String(action || '').trim().toLowerCase();
-  const devices = await listDevicesForBridge();
+  const devices = await listVoiceDevices();
   const r = resolveDevice(devices, query);
   if (r.error) return { ok: false, message: r.error };
   const d = r.device;
@@ -220,6 +248,8 @@ async function controlDevice(query, action) {
   }
   if (!d.online) return { ok: false, message: `${d.name}（${d.room}）当前离线，无法控制` };
   const wantOn = act === 'on' || act === '开' || act === '打开' ? true : act === 'off' || act === '关' || act === '关闭' ? false : !(d.sw && d.sw.v);
+  // HA 设备（v1.14.0）：call_service + 回读验证。不走智能屏转述兜底——那是米家的私有小爱通道。
+  if (d.backend === 'ha') return ha.controlEntity(d, wantOn);
   const where = d.room === '未分区' ? '' : d.room;
   // 转述兜底：把结构化指令拼成自然语言走小爱（execute-text-directive 无结构化回执，尽力而为）
   const viaSpeaker = async (reason) => {
@@ -237,10 +267,11 @@ async function controlDevice(query, action) {
 }
 
 async function deviceStatus(query) {
-  const devices = await listDevicesForBridge();
+  const devices = await listVoiceDevices();
   const r = resolveDevice(devices, query);
   if (r.error) return { ok: false, message: r.error };
   const d = r.device;
+  if (d.backend === 'ha') return ha.statusEntity(d);
   const parts = [`${d.room === '未分区' ? '' : d.room}${d.name}`, d.online ? '在线' : '离线'];
   if (d.sw) parts.push(d.sw.v ? '开着' : '关着');
   if (d.t != null) parts.push(`温度 ${d.t}°C`);
@@ -1127,15 +1158,25 @@ async function dispatch(op, body) {
   const b = body || {};
   try {
     if (op === 'ping') {
-      const devices = await listDevicesForBridge();
-      return { ok: true, message: `工作台在线，米家有 ${devices.length} 台可控设备`, devices: devices.length };
+      // v1.14.0：设备表按「设备来源」合并；拉不动时如实报（面板/语音都要真话术，不装在线）
+      let devices = [];
+      try { devices = await listVoiceDevices(); }
+      catch (e) { return { ok: false, message: `工作台在线，但设备表拉取失败：${e.message}` }; }
+      const mi = devices.filter((d) => d.backend !== 'ha').length;
+      const haN = devices.length - mi;
+      const src = ha.deviceSource();
+      const txt = src === 'ha'
+        ? `Home Assistant 有 ${haN} 台可控设备`
+        : src === 'both' ? `米家有 ${mi} 台、Home Assistant 有 ${haN} 台可控设备`
+        : `米家有 ${mi} 台可控设备`;
+      return { ok: true, message: `工作台在线，${txt}`, devices: devices.length };
     }
     if (op === 'list_devices') {
       // 回包瘦身（v1.9.13）：只发 AI 需要的名字/房间/状态。板子 WiFi 弱信号（RSSI -70 实测）下
       // 14KB 全量列表要传 16 秒，会拖垮 MQTT 长连接——工具结果发不回云端，用户听到「发送失败」。
       // did / sw.siid / sw.piid 是服务端内部解析数据（control 在服务端重新拉全量），不出网；
       // 纯传感器（无开关无温湿度）整体省略——status 对它们本来也无话可说。
-      const all = await listDevicesForBridge();
+      const all = await listVoiceDevices();
       const devices = [];
       for (const d of all) {
         if (!d.sw && d.t == null && d.h == null) continue;
@@ -1188,7 +1229,7 @@ async function dispatch(op, body) {
 
 module.exports = {
   getConfig, saveConfig, getPublicConfig, ensureBridgeKey, rotateBridgeKey, bridgeKeyOk,
-  listDevicesForBridge, setDeviceAlias, dispatch, speakerAction, ensureSpeakerPoints,
+  listDevicesForBridge, listVoiceDevices, setDeviceAlias, dispatch, speakerAction, ensureSpeakerPoints,
   setPhotoPending, listPhotos, savePhoto, deletePhoto, photoPath,
   noteBoardIp, getBoardInfo, appendChatLog, listChatLog,
   // v1.9.31 新增：语音查询 / 转交 agent / 凭证 / 审计 / 接入点状态

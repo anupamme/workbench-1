@@ -287,15 +287,17 @@ function dhAdminOnly(req, res) {
 const dhNormName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '');
 
 // 设备一览 + 家庭清单 + 当前配置（一次拿全，面板不用发三次请求）
+// v1.14.0：改吃合并语音设备表（米家 + Home Assistant，按 HA tab 的「设备来源」分流）——
+// 来源选了 HA/两者时，数字人这页的设备卡与快捷开关自动带上 HA 实体，别名框也直接可用。
 router.get('/dh/smarthome/devices', asyncH(async (req, res) => {
   const cfg = xiaozhiSvc.getPublicConfig();
   const base = { home_filter: cfg.home_filter || 'all', channel: cfg.channel || 'direct', speaker: cfg.speaker || {}, is_admin: req.user.role === 'admin' };
   try {
-    const devices = await xiaozhiSvc.listDevicesForBridge(req.query.fresh === '1', { includeParents: true });
+    const devices = await xiaozhiSvc.listVoiceDevices(req.query.fresh === '1', { includeParents: true });
     const homes = [...new Set(devices.map((d) => d.home).filter(Boolean))];
     res.json({ bound: true, devices, homes, ...base });
   } catch (e) {
-    // 未绑米家等：不 500，让面板能区分「没绑」和「绑了但没设备」
+    // 未绑米家/未配 HA 等：不 500，让面板能区分「没绑」和「绑了但没设备」
     res.json({ bound: false, devices: [], homes: [], message: e.message, ...base });
   }
 }));
@@ -330,7 +332,7 @@ router.put('/dh/smarthome/alias', asyncH(async (req, res) => {
   const alias = String(req.body?.alias || '').trim();
   if (alias) {
     let devices = [];
-    try { devices = await xiaozhiSvc.listDevicesForBridge(); } catch { /* 未绑米家：跳过交叉校验，仅做格式检查 */ }
+    try { devices = await xiaozhiSvc.listVoiceDevices(); } catch { /* 未绑米家/未配 HA：跳过交叉校验，仅做格式检查 */ }
     const me = devices.find((d) => String(d.did) === did);
     if (me && dhNormName(alias) === dhNormName(me.name)) {
       return res.status(400).json({ error: `别名「${alias}」和设备本名相同——起不到消歧作用，请换一个不同的叫法` });

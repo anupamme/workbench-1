@@ -34,12 +34,17 @@
         <SmartHome v-else layout="sidebar" v-model:tab="tab" />
       </main>
     </div>
+    <!-- 音乐播放条/全屏（v1.16.0）：与主工作台 App.vue 同一套挂法，音乐页点歌后跨模块不断播 -->
+    <MusicBar />
+    <MusicFull />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue';
 import SmartHome from './views/SmartHome.vue';
+import MusicBar from './components/MusicBar.vue';
+import MusicFull from './components/MusicFull.vue';
 import { api } from './api';
 
 // 侧栏模块 = 原智能家居页的 6 个页签，key 与后端 auth.js TAB_PATHS 的 tab key 完全一致
@@ -75,8 +80,13 @@ const MODULES = [
     svg: '<svg viewBox="0 0 24 24"><path d="M3 5h8M7 3v2c0 4-2 7-4.5 8.5M5 9c1.2 2.6 3.6 4.4 6 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="m12.5 21 4-11 4 11M14 17.5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   },
   {
-    key: 'videocenter', label: '视频中心',
+    key: 'videocenter', label: '影视',
     svg: '<svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.5 9.5 15.5 12l-5 2.5z" fill="currentColor"/></svg>',
+  },
+  {
+    // v1.16.0：音乐（NAS 曲库 + 底部悬浮播放条）；SH_API_ALLOW 已放行 /mc
+    key: 'music', label: '音乐',
+    svg: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg>',
   },
 ];
 
