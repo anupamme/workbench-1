@@ -151,15 +151,16 @@
                   <button class="small" :disabled="scrapeTests[ch.id] === 'testing'" @click="testChannel(ch.id)">
                     {{ scrapeTests[ch.id] === 'testing' ? '测试中…' : scrapeTests[ch.id] === 'ok' ? '✅ 通' : scrapeTests[ch.id] === 'bad' ? '❌ 不通' : '测连通' }}
                   </button>
+                  <span v-if="scrapeTests[ch.id] === 'bad' && scrapeErrMsg[ch.id]" class="sc-errmsg">{{ scrapeErrMsg[ch.id] }}</span>
                   <template v-if="!ch.no_url">
                     <div class="sc-row sc-url">
                       <input v-model="scrapeUrls[ch.id]" class="grow" :disabled="setSaving" placeholder="粘贴该渠道的搜索接口地址后才会启用（推荐地址见下）" @keyup.enter="saveScrape" />
                     </div>
-                    <div class="tip sc-rec">推荐地址：{{ ch.rec }}（仅供参考，不内置；自行粘贴到输入框后方可使用）<template v-if="ch.effective"> · 已生效：{{ ch.effective }}</template></div>
+                    <div class="tip sc-rec">推荐地址：{{ ch.rec }}（仅供参考，不内置；自行粘贴到输入框后方可使用）<template v-if="ch.effective"> · 已生效：{{ ch.effective }}</template><template v-if="urlDirty(ch)"> · <b class="sc-dirty">未保存</b></template></div>
                   </template>
                 </div>
                 <div class="sc-row">
-                  <button class="small" :disabled="setSaving" @click="saveScrape"><span class="material-icons ic-sm">save</span> 保存勾选与地址</button>
+                  <button class="small" :class="{ primary: scrapeDirty }" :disabled="setSaving" @click="saveScrape"><span class="material-icons ic-sm">save</span> 保存勾选与地址<template v-if="scrapeDirty"> ●</template></button>
                   <button v-if="!scrape.running" class="small primary" :disabled="setSaving || scanning" @click="startScrape">
                     <span class="material-icons ic-sm">cloud_download</span> 开始刮削（{{ scrape.pending }} 首待补）
                   </button>
@@ -438,8 +439,15 @@ const poster = ref({ names: '', priority: 'embed', bg: 'color' });
 const lyr = ref({ api: '', sourceText: '', cached: 0, testMsg: '', testOk: false });
 const lyrTesting = ref(false);
 const scrapeOn = ref([]);            // 勾选的渠道 id（顺序 = 刮削优先级）
-const scrapeUrls = ref({});          // v1.17.1 渠道地址 { netease:'https://…', … }（空串=用默认；itunes 无此项）
+const scrapeUrls = ref({});          // v1.17.1 渠道地址 { netease:'https://…', … }（v1.18.1 起空=该渠道不启用；itunes 无此项）
 const scrapeTests = ref({});         // { netease: 'testing'|'ok'|'bad' }
+const scrapeErrMsg = ref({});        // 测连通失败原因（v1.18.2 直接亮在按钮旁，不再只靠 flash 一闪）
+// v1.18.2 未保存状态：地址或勾选与服务器存的不一致时，保存按钮高亮加 ●、行内亮「未保存」
+const urlDirty = (ch) => !!(ch && !ch.no_url && String(scrapeUrls.value[ch.id] || '').trim() !== String(ch.url || ''));
+const scrapeDirty = computed(() => {
+  if ((scrapeOn.value || []).join(',') !== (((cfg.value.scrape || {}).on) || []).join(',')) return true;
+  return ((cfg.value.scrape || {}).channels || []).some(urlDirty);
+});
 const scrape = ref({ channels: [], on: [], pending: 0, scraped: 0, running: false, done: 0, total: 0, found: 0, failed: 0, current: '', log: [], finished_at: 0 });
 const desk = ref({ on: true, family: '', size: 36 });
 const agents = ref([]);
@@ -493,18 +501,30 @@ async function saveScrape() {
   patch.scrape_urls = trimmed;
   try {
     applyCfg(await api.post('/mc/settings', patch));
-    flash('刮削渠道已保存（勾选顺序即优先级；地址留空=用默认）');
+    flash('刮削渠道已保存（勾选顺序即优先级；地址留空=该渠道不启用，iTunes 除外）');
+    setSaving.value = false;
+    return true;
   } catch (e) { flash('保存失败：' + e.message); }
   setSaving.value = false;
+  return false;
 }
 async function testChannel(id) {
   scrapeTests.value = { ...scrapeTests.value, [id]: 'testing' };
+  scrapeErrMsg.value = { ...scrapeErrMsg.value, [id]: '' };
   try {
+    // v1.18.2 测的是输入框里现粘的地址：有未保存改动先落库再测（「粘贴→测连通」直通，不用先找保存按钮）
+    if (scrapeDirty.value && !(await saveScrape())) {
+      scrapeTests.value = { ...scrapeTests.value, [id]: 'bad' };
+      scrapeErrMsg.value = { ...scrapeErrMsg.value, [id]: '地址没保存成功（见右上提示），改好再试' };
+      return;
+    }
     const r = await api.post('/mc/scrape/test', { channel: id });
     scrapeTests.value = { ...scrapeTests.value, [id]: r.ok ? 'ok' : 'bad' };
+    scrapeErrMsg.value = { ...scrapeErrMsg.value, [id]: r.ok ? '' : String(r.error || '不通') };
     flash(r.ok ? `「${r.channel}」连通：${r.ms}ms 拿到 ${r.bytes}B 封面图` : `「${r.channel}」不通：${r.error}`);
   } catch (e) {
     scrapeTests.value = { ...scrapeTests.value, [id]: 'bad' };
+    scrapeErrMsg.value = { ...scrapeErrMsg.value, [id]: e.message };
     flash('测试失败：' + e.message);
   }
 }
@@ -830,6 +850,8 @@ async function rescan() {
 .sc-url { flex: 1 1 100%; padding-left: 24px; }   /* 地址输入框独占一行，左缘与渠道名对齐 */
 .sc-url input.grow { font-size: 12px; }
 .sc-rec { flex: 1 1 100%; padding-left: 24px; word-break: break-all; }
+.sc-errmsg { color: var(--danger, #e5484d); font-size: 12px; word-break: break-all; }
+.sc-dirty { color: var(--warn, #f5a623); }
 .sc-ch:hover { background: var(--bg3); }
 .sc-chk b { font-size: 13px; }
 .sc-desc { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

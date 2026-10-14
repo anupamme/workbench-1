@@ -470,6 +470,32 @@ try {
     'K5c 四渠道下方各显示推荐地址并注明「仅供参考，不内置；自行粘贴后方可使用」', JSON.stringify(recLines));
   ok((await p.locator('.zone .mc-set button', { hasText: '保存勾选与地址' }).count()) === 1,
     'K5d 保存按钮合并勾选与地址');
+  // v1.18.2 「粘贴→测连通」直通：未保存时按钮亮 ● / 行内亮「未保存」；点测连通自动先落库再测
+  const neteaseRow = p.locator('.zone .mc-set .sc-ch', { hasText: '网易' });
+  const neteaseInput = neteaseRow.locator('.sc-url input');
+  await neteaseInput.fill('http://127.0.0.1:1/none');
+  await p.waitForTimeout(200);
+  ok((await neteaseRow.innerText()).includes('未保存'), 'K5e-1 粘贴未保存时行内亮「未保存」');
+  const saveBtn = p.locator('.zone .mc-set button', { hasText: '保存勾选与地址' });
+  ok(/●/.test(await saveBtn.innerText()), 'K5e-2 保存按钮带 ●（未保存态）');
+  await neteaseRow.locator('button', { hasText: '测连通' }).click();
+  await p.locator('.zone .mc-set .sc-errmsg').waitFor({ timeout: 10000 });
+  const cfgAfter = await api('GET', '/api/mc/config', { token: T });
+  const savedCh = ((cfgAfter.j.scrape || {}).channels || []).find((c) => c.id === 'netease');
+  ok(savedCh && savedCh.url === 'http://127.0.0.1:1/none' && savedCh.effective !== '',
+    'K5e-3 点测连通已自动保存（config 里 url 落库、effective 归一非空）', JSON.stringify(savedCh));
+  ok((await neteaseRow.innerText()).includes('不通'), 'K5e-4 假地址如实回 ❌ 不通');
+  ok((await p.locator('.zone .mc-set .sc-errmsg').first().innerText()).length > 0,
+    'K5e-5 失败原因直接亮在按钮旁（不再只靠 flash）');
+  // 清场：把假地址清掉恢复「未配置」，并回到干净勾选态（K5e 之前的 on 顺序由 harness 前置设定）
+  await neteaseInput.fill('');
+  await p.locator('.zone .mc-set button', { hasText: '保存勾选与地址' }).click();
+  await p.waitForTimeout(400);
+  const cfgClean = await api('GET', '/api/mc/config', { token: T });
+  const cleanCh = ((cfgClean.j.scrape || {}).channels || []).find((c) => c.id === 'netease');
+  ok(cleanCh && cleanCh.url === '' && cleanCh.effective === '', 'K5e-6 清空保存后回到未配置（effective 空）', JSON.stringify(cleanCh));
+  ok(!(await neteaseRow.innerText()).includes('未保存'), 'K5e-7 保存后「未保存」标记消失');
+
   ok((await p.locator('.zone .mc-set button', { hasText: '下载 Windows 安装包' }).count()) === 1
     && (await p.locator('.zone .mc-set button', { hasText: '轮换设备密钥' }).count()) === 1,
     'K6 悬浮歌词段带安装包下载与密钥轮换');
