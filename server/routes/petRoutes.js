@@ -1028,14 +1028,22 @@ const PET_PS_TEMPLATE = [
   '$mtx.ReleaseMutex() | Out-Null',
 ];
 
+// 全家桶安装包（启动端 clients\）复用：与 GET type=petsetup 同 key 规则。
+// 返回不带 BOM 的模板文本（路由侧自己加 BOM 前缀，启动端打包侧同样自行前缀）；
+// 该用户没开桌面宠物开关（无 key）→ 返回 null，调用方跳过该条目。
+function buildPetSetupPs(base, userId) {
+  const pref = petDesktopPref(userId);
+  if (!pref.key) return null;
+  return PET_PS_TEMPLATE.join('\r\n').replace(/__SERVER__/g, base).replace(/__KEY__/g, pref.key);
+}
+
 router.get('/pets/agent-files', (req, res) => {
   const type = String(req.query.type || '');
-  const pref = petDesktopPref(req.user.id);
   // 不设 Cache-Control：no-store 会让 Chrome/Edge <a download> 直点下载报
   // 「下载失败-请检查互联网连接状况」（复制链接新窗口打开反而正常）；与 monitor-setup 一致
   if (type === 'petsetup') {
-    if (!pref.key) return res.status(400).json({ error: '请先打开桌面宠物开关并保存' });
-    const ps = PET_PS_TEMPLATE.join('\r\n').replace(/__SERVER__/g, petBaseUrl(req)).replace(/__KEY__/g, pref.key);
+    const ps = buildPetSetupPs(petBaseUrl(req), req.user.id);
+    if (!ps) return res.status(400).json({ error: '请先打开桌面宠物开关并保存' });
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="desktop-pet-setup.ps1"');
     return res.end('﻿' + ps); // UTF-8 BOM：PS 5.1 无 BOM 会按 ANSI 解析中文
@@ -1066,3 +1074,4 @@ router.get('/pets/agent-files', (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildPetSetupPs = buildPetSetupPs;

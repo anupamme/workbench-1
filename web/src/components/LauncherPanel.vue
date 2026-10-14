@@ -2,24 +2,24 @@
   <div class="launcher-panel">
     <div v-if="msg" class="msg" :class="msgType">{{ msg }}</div>
 
-    <!-- ============ ① 集中启动端安装包 ============ -->
+    <!-- ============ ① 集中启动端安装包（一键全装） ============ -->
     <div class="card">
-      <h3>🚀 集中启动端（Windows 托盘）</h3>
+      <h3>🚀 集中启动端（Windows 托盘 · 一键全装）</h3>
       <div class="muted" style="font-size:12.5px; margin-bottom:10px">
-        一个 Windows 托盘程序把全部电脑端任务集中到一起：开机自启（任务栏右下角<b>四方块图标</b>，与工作台首页图标同款），
-        统一一条 <b>20 秒心跳</b>对接工作台。托盘右键菜单七项：
-        ① 短消息通知（可开关「弹出桌面通知 / 自动播放语音」）② 电脑监控（只显示联网状态，不能从托盘关停）
-        ③ 剪贴板采集（只显示联网状态，不能从托盘关停）④ 电子宠物（可显示/隐藏，设置一次下次开机保持）
-        ⑤ 悬浮歌词（可显示/隐藏，同上）⑥ 录音转写算力（VibeASR 1.5B / VibeVoice 7B 是否就位、安装路径、模型容量）
-        ⑦ 连接目标（当前对接的工作台地址，只读）。<b>整体没有退出按钮</b>——要撤掉请下载卸载包。
+        双击一次安装包，<b>启动端 + 电脑监控 + 剪贴板采集 + 电子宠物 + 悬浮歌词 全部装好</b>（各自装到
+        %LOCALAPPDATA% 并设开机自启；任务栏右下角出现<b>四方块图标</b>，与工作台首页图标同款）。
+        装完在<b>托盘右键菜单</b>里勾选启用/停用各客户端：勾=启用（没在跑自动拉起，崩了 45 秒内看护重拉），
+        去勾=停用，设置一次下次开机保持。菜单其余项：短消息通知两开关、录音转写算力就位状态、连接目标只读。
+        <b>整体没有退出按钮</b>——要撤掉请用卸载包（一键卸载启动端与四个客户端）。
       </div>
       <div class="row" style="flex-wrap:wrap; gap:10px; align-items:center">
-        <button class="primary" :disabled="pkgBusy" @click="dlHub()">⬇ 下载启动端安装包（zip）</button>
+        <button class="primary" :disabled="pkgBusy" @click="dlHub()">⬇ 下载一键安装包（zip，约 8.5MB 含字体）</button>
         <button :disabled="pkgBusy" @click="dlHub('uninstall')">⬇ 卸载包</button>
         <button class="danger" @click="rotateKey">轮换密钥</button>
       </div>
       <div class="muted" style="font-size:12px; margin-top:8px">
         安装包内嵌下载者的身份（装到谁电脑上就弹谁的消息）与回连地址——内网浏览器打开本页下载即嵌内网地址、外网同理。
+        电子宠物需先在宠物页打开桌面宠物开关，没开时安装包自动跳过（开起后再下载补装）；录音转写算力体积大不在此包，在下面单独装。
         轮换密钥后所有已装启动端立即失联，需重新下载安装包重装。
       </div>
     </div>
@@ -28,9 +28,8 @@
     <div class="card">
       <h3>📦 Windows 客户端 · 集中下载</h3>
       <div class="muted" style="font-size:12.5px; margin-bottom:10px">
-        需要装到 Windows 电脑的客户端都在这里下载（与各自功能页的安装包同源）。
+        单独补装/重装某个客户端时用这里（与上面一键安装包里的完全同源；已随一键包装好的无需再装）。
         带 <code>.ps1 + 安装.bat</code> 两个文件的：放同一文件夹后双击 <code>安装.bat</code>；卸载包自包含可直接双击。
-        启动端装好后，电子宠物 / 悬浮歌词 / 短消息弹窗也可以由启动端统一拉起与管理，二者不冲突。
       </div>
       <table class="tb">
         <thead><tr><th style="width:130px">客户端</th><th>说明</th><th style="width:290px">下载</th></tr></thead>
@@ -117,7 +116,7 @@ const services = [
     ],
   },
   {
-    key: 'monitor', name: '电脑监控', desc: '按服务端配置定时截图上报（效率工具→电脑监控里配置）。托盘里只显示联网状态。',
+    key: 'monitor', name: '电脑监控', desc: '按服务端配置定时截图上报（效率工具→电脑监控里配置）。装好后可在托盘菜单勾选启用/停用。',
     files: [
       { label: 'setup.ps1', url: '/monitor/agent-files?type=setup' },
       { label: '安装.bat', url: '/monitor/agent-files?type=install', title: '与 setup.ps1 放同一文件夹后双击' },
@@ -125,7 +124,7 @@ const services = [
     ],
   },
   {
-    key: 'clipboard', name: '剪贴板采集', desc: '把这台电脑复制的文字自动采集进工作台剪贴板页（仅管理员数据）。托盘里只显示联网状态。',
+    key: 'clipboard', name: '剪贴板采集', desc: '把这台电脑复制的文字自动采集进工作台剪贴板页（仅管理员数据）。装好后可在托盘菜单勾选启用/停用。',
     files: [
       { label: 'setup.ps1', url: '/clipboard/agent?type=setup' },
       { label: '安装.bat', url: '/clipboard/agent?type=install', title: '与 setup.ps1 放同一文件夹后双击' },

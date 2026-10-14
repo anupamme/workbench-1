@@ -87,12 +87,36 @@ try {
   const zipMod = await import('../server/services/zipService.js');
   const extractZip = zipMod.extractZip || zipMod.default?.extractZip;
   const by = Object.fromEntries(extractZip(pkgBuf).map((e) => [e.name, e.data]));
-  ok(['setup.ps1', '安装.cmd', '卸载.cmd', '使用说明.txt'].every((n) => by[n]), 'B4 安装包四条目齐', Object.keys(by).join('|'));
+  const bom = (b) => b && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf;
+  // 全家桶（v1.18.3）：启动端 + clients\ 四客户端（宠物未开桌面开关时跳过 pet）
+  const needPkg = ['setup.ps1', 'clients/monitor-setup.ps1', 'clients/clipboard-setup.ps1',
+    'clients/lyrics/setup.ps1', '安装.cmd', '卸载.cmd', '使用说明.txt'];
+  ok(needPkg.every((n) => by[n]) && !by['clients/desktop-pet-setup.ps1'],
+    'B4 一键安装包=全家桶：启动端 + 监控/剪贴板/歌词客户端（宠物未开→跳过）', Object.keys(by).join('|'));
+  const fontEntry = by['clients/lyrics/font.otf'];
+  ok(!fontEntry || fontEntry.length > 8 * 1024 * 1024, 'B4b 思源黑体随包（>8MB）', fontEntry && String(fontEntry.length));
+  const monPs = by['clients/monitor-setup.ps1'];
+  const clipPs = by['clients/clipboard-setup.ps1'];
+  const lyrPs = by['clients/lyrics/setup.ps1'];
+  ok(bom(monPs) && monPs.toString('utf8').includes('WorkbenchMonitor') && monPs.toString('utf8').includes(B) && !monPs.toString('utf8').includes('__SERVER__'),
+    'B4c clients/monitor-setup.ps1：BOM + 模板就位 + 地址已嵌');
+  ok(bom(clipPs) && clipPs.toString('utf8').includes(String(ADMIN_UID)) && !clipPs.toString('utf8').includes('__UID__'),
+    'B4d clients/clipboard-setup.ps1：BOM + 下载者 uid 已嵌');
+  ok(bom(lyrPs) && /[0-9a-f]{32}/.test(lyrPs.toString('utf8')) && !lyrPs.toString('utf8').includes('__KEY__'),
+    'B4e clients/lyrics/setup.ps1：BOM + mc_agent_key 已嵌');
+  // 宠物开了桌面开关后重下：desktop-pet-setup.ps1 进包
+  const petOn = await api('PUT', '/pets/desktop-config', { token: T, body: { enabled: true } });
+  ok(petOn.status === 200 && petOn.j.enabled === true, 'B4f 宠物页开桌面宠物开关（为下一条）', JSON.stringify(petOn.j).slice(0, 120));
+  const pkgRes2 = await fetch(B + '/api/launcher/agent/package', { headers: { Authorization: 'Bearer ' + T, Origin: B } });
+  const by2 = Object.fromEntries(extractZip(Buffer.from(await pkgRes2.arrayBuffer())).map((e) => [e.name, e.data]));
+  ok(bom(by2['clients/desktop-pet-setup.ps1']) && by2['clients/desktop-pet-setup.ps1'].toString('utf8').includes(petOn.j.key),
+    'B4g 开关打开后 desktop-pet-setup.ps1 进包（嵌个人 key）', Object.keys(by2).join('|'));
   const unRes = await fetch(B + '/api/launcher/agent/package?mode=uninstall', { headers: { Authorization: 'Bearer ' + T, Origin: B } });
   const unBuf = Buffer.from(await unRes.arrayBuffer());
   const unBy = Object.fromEntries(extractZip(unBuf).map((e) => [e.name, e.data]));
-  ok(unRes.status === 200 && ['setup.ps1', '卸载.cmd', '使用说明.txt'].every((n) => unBy[n]) && !unBy['安装.cmd'],
-    'B5 卸载包三件套（不带 安装.cmd）', Object.keys(unBy).join('|'));
+  ok(unRes.status === 200 && ['setup.ps1', '卸载.cmd', '使用说明.txt'].every((n) => unBy[n]) && !unBy['安装.cmd']
+    && !Object.keys(unBy).some((n) => n.startsWith('clients/')),
+    'B5 卸载包三件套（不带 安装.cmd、不带 clients\\——卸载分支自含清理逻辑）', Object.keys(unBy).join('|'));
 
   const ps = by['setup.ps1'];
   const psText = ps.toString('utf8');
@@ -140,6 +164,25 @@ try {
     { encoding: 'utf8', timeout: 60000 });
   ok(psChk.status === 0 && (psChk.stdout || '').includes('SYNTAX-OK'), 'C11 setup.ps1 PowerShell 语法检查通过（Parser::ParseFile，不执行）',
     ((psChk.stdout || '') + (psChk.stderr || '')).slice(0, 400));
+
+  // ---------- v1.18.3 托盘重构的硬断言（用户实测三连报的根治点） ----------
+  ok(psText.includes('System.Windows.Forms.Application]::Run()') && !psText.includes('Register-ObjectEvent'),
+    'C12 真 WinForms 消息循环（Application.Run）：v1 的 Start-Sleep 死循环不泵消息=菜单闪退、Register-ObjectEvent 点击不触发，全废');
+  ok((psText.match(/Add_Click/g) || []).length >= 7 && psText.includes('Add_BalloonTipClicked'),
+    'C13 菜单事件直接 add_Click（UI 线程内触发）≥7 处 + 气泡点击', String((psText.match(/Add_Click/g) || []).length));
+  ok(psText.includes('$miMonitor.Add_Click') && psText.includes('$miClip.Add_Click')
+    && !psText.includes('$miMonitor.Enabled = $false') && !psText.includes('$miClip.Enabled = $false'),
+    'C14 电脑监控/剪贴板采集可勾选启用（不再写死灰色只读）');
+  ok(psText.includes('看护拉起') && psText.includes('startAt') && psText.includes('-gt 45'),
+    'C15 看护：勾「开」没在跑 45s 冷却后重拉（歌词永远「启动中」的根治）');
+  ok(psText.includes('clients') && psText.includes('monitor-setup.ps1') && psText.includes('lyrics\\setup.ps1') && psText.includes('-Cmd install'),
+    'C16 一键全装：安装分支拉起 clients\\ 四客户端（歌词走 -Cmd install）');
+  ok(['WorkbenchMonitor', 'WorkbenchClipboard', 'WorkbenchDesktopPet', 'WorkbenchLyrics'].every((n) => psText.includes(n))
+    && psText.includes('录音转写算力不在此列'),
+    'C17 一键全卸：卸载分支清四客户端（自启动/进程/目录）+ 启动端自己，算力不动');
+  ok(psText.includes('monitor = [bool]$st.monitor') && psText.includes('clipboard = [bool]$st.clipboard')
+    && psText.includes('petDirty') && psText.includes('lyricsDirty'),
+    'C18 四客户端偏好全落 state.json（设置一次下次开机保持）');
 
   // ---------- poll 全回合 ----------
   const DEVID = 'PCe2e00000001';

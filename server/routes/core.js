@@ -527,15 +527,20 @@ const CLIP_UNINSTALL_BAT = [
   'pause',
 ].join('\r\n');
 
+// 全家桶安装包（启动端 clients\）复用同一段模板：与 GET type=setup 同 key 同 uid 规则
+function buildClipSetupPs(base, uid) {
+  return '﻿' + CLIP_PS.replace(/__SERVER__/g, base).replace(/__KEY__/g, clipKey()).replace(/__UID__/g, String(Number(uid) || 0));
+}
+
 // 三件套下发（仅管理员；ps1 内嵌下载来源地址 + 密钥 + 下载者 uid）
 router.get('/clipboard/agent', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可下载采集脚本' });
   const t = String(req.query.type || '');
   if (t === 'setup') {
-    const ps = CLIP_PS.replace(/__SERVER__/g, clipBaseUrl(req)).replace(/__KEY__/g, clipKey()).replace(/__UID__/g, String(req.user.id));
+    const ps = buildClipSetupPs(clipBaseUrl(req), req.user.id);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="clipboard-setup.ps1"');
-    return res.end('﻿' + ps); // UTF-8 BOM：PS 5.1 无 BOM 按 ANSI 解析中文
+    return res.end(ps);
   }
   if (t === 'install') {
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -610,3 +615,4 @@ router.get('/search', (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildClipSetupPs = buildClipSetupPs;

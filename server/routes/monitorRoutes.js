@@ -365,17 +365,21 @@ const UNINSTALL_BAT = [
   'pause',
 ].join('\r\n');
 
+// 全家桶安装包（启动端 clients\）复用同一段模板：与 GET type=setup 同 key 同地址规则
+function buildMonitorSetupPs(base) {
+  return '﻿' + PS_TEMPLATE.replace(/__SERVER__/g, base).replace(/__KEY__/g, monitor.getConfig().access_key);
+}
+
 router.get('/monitor/agent-files', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员' });
   const type = String(req.query.type || '');
-  const cfg = monitor.getConfig();
   // 不设 Cache-Control：no-store 会让 Chrome/Edge <a download> 直点下载报「请检查互联网状况」
   // （复制链接新开窗口却能下）——宠物模块 agent-files 踩过同款坑（v1.3.8 批），监控这边同步修复。
   if (type === 'setup') {
-    const ps = PS_TEMPLATE.replace(/__SERVER__/g, baseUrl(req)).replace(/__KEY__/g, cfg.access_key);
+    const ps = buildMonitorSetupPs(baseUrl(req));
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="monitor-setup.ps1"');
-    return res.end('\uFEFF' + ps); // UTF-8 BOM：PS 5.1 无 BOM 会按 ANSI 解析中文注释
+    return res.end(ps); // BOM 已含在 buildMonitorSetupPs 里（PS 5.1 无 BOM 按 ANSI 解析中文）
   }
   if (type === 'install') {
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -391,3 +395,4 @@ router.get('/monitor/agent-files', (req, res) => {
 });
 
 module.exports = router;
+module.exports.buildMonitorSetupPs = buildMonitorSetupPs;
