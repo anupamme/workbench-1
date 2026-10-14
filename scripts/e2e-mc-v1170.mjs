@@ -65,6 +65,19 @@ const qqSrv = http.createServer((req, res) => {
   }
   res.writeHead(404); res.end();
 });
+// v1.17.1 酷狗：第一条是歌手头像（singerimg，必须被跳过），第二条才是 imge.kugou.com 专辑封面。
+// URL 里塞 imge.kugou.com 当路径段——searchChannel 只做 includes 判断，真实下载走本机假图床。
+const kugouSrv = http.createServer((req, res) => {
+  if ((req.url || '').startsWith('/song_search_v2')) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: { lists: [
+      { SongName: '晴天', Image: `http://127.0.0.1:${PJ}/singerimg.kugou.com/head/240/{size}.jpg` },
+      { SongName: '晴天', Image: `http://127.0.0.1:${PJ}/imge.kugou.com/stdmusic/240/{size}.jpg` },
+    ] } }));
+    return;
+  }
+  res.writeHead(404); res.end();
+});
 const itunesSrv = http.createServer((req, res) => {
   if ((req.url || '').startsWith('/search')) {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -73,7 +86,7 @@ const itunesSrv = http.createServer((req, res) => {
   }
   res.writeHead(404); res.end();
 });
-for (const s of [neteaseSrv, qqSrv, itunesSrv]) await new Promise((r) => s.listen(0, '127.0.0.1', r));
+for (const s of [neteaseSrv, qqSrv, kugouSrv, itunesSrv]) await new Promise((r) => s.listen(0, '127.0.0.1', r));
 
 // ---------- 假 LRCLIB：pollPayload 的异步歌词补拉会打它 ----------
 const lrclib = http.createServer((req, res) => {
@@ -118,6 +131,7 @@ const server = spawn(process.execPath, ['server/index.js'], {
     MC_SCRAP_NETEASE: `http://127.0.0.1:${neteaseSrv.address().port}`,
     MC_SCRAP_QQ: `http://127.0.0.1:${qqSrv.address().port}`,
     MC_SCRAP_QQ_PIC: `http://127.0.0.1:${PJ}`,
+    MC_SCRAP_KUGOU: `http://127.0.0.1:${kugouSrv.address().port}`, // 光杆主机：验 legacyPath 补 /song_search_v2
     MC_SCRAP_ITUNES: `http://127.0.0.1:${itunesSrv.address().port}`,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -157,8 +171,12 @@ try {
   ok(sc.j.ok === true && sc.j.added === 2, 'A2 扫描入库 2 首', JSON.stringify(sc.j).slice(0, 120));
   const cfg0 = await api('GET', '/api/mc/config', { token: T });
   ok(cfg0.j.stats?.nocover === 2 && cfg0.j.scrape?.pending === 2, 'A3 两首均无封面（nocover=2 / pending=2）', JSON.stringify(cfg0.j.stats));
-  ok(Array.isArray(cfg0.j.scrape?.channels) && cfg0.j.scrape.channels.map((c) => c.id).join(',') === 'netease,qq,itunes'
-    && cfg0.j.scrape.on.join(',') === 'netease,qq,itunes', 'A4 渠道清单与默认全开', JSON.stringify(cfg0.j.scrape?.on));
+  ok(Array.isArray(cfg0.j.scrape?.channels) && cfg0.j.scrape.channels.map((c) => c.id).join(',') === 'netease,qq,kugou,kuwo,itunes'
+    && cfg0.j.scrape.on.join(',') === 'netease,qq,kugou,kuwo,itunes', 'A4 渠道清单五家与默认全开', JSON.stringify(cfg0.j.scrape?.on));
+  const itCh = (cfg0.j.scrape.channels || []).find((c) => c.id === 'itunes') || {};
+  const woCh = (cfg0.j.scrape.channels || []).find((c) => c.id === 'kuwo') || {};
+  ok(itCh.no_url === true && itCh.url === '' && itCh.rec === '', 'A4a iTunes 按要求保留现有模式（no_url：不出输入框不给推荐）', JSON.stringify(itCh));
+  ok(woCh.rec === 'https://kuwo.cn' && (woCh.effective || '').includes('/r.s'), 'A4b 酷我推荐地址=站点根，归一后指向 search.kuwo.cn/r.s', JSON.stringify(woCh));
 
   // ---------- B. 渠道勾选持久化：顺序保留 / 显式全关是真关 / 全关时 start 如实拒绝 ----------
   const s1 = await api('POST', '/api/mc/settings', { token: T, body: { scrape_on: ['qq', 'netease'] } });
@@ -170,9 +188,50 @@ try {
   ok(st0.status === 400 && (st0.j.error || '').includes('所有渠道都被关掉了'), 'B3 全关时 start 刮削 400 并如实说明', JSON.stringify(st0.j));
   await api('POST', '/api/mc/settings', { token: T, body: { scrape_on: ['netease', 'qq', 'itunes'] } });
 
+  // ---------- v1.17.1 渠道地址表：保存往返 / 两处「粘贴推荐地址」归一 / 先验后写 ----------
+  const chOf = (j, id) => ((j.scrape || {}).channels || []).find((c) => c.id === id) || {};
+  const cfg_now_on = (r) => ((r.j.scrape || {}).on || []).join(',');
+  const u1 = await api('POST', '/api/mc/settings', { token: T, body: { scrape_urls: {
+    netease: `http://127.0.0.1:${neteaseSrv.address().port}/api/cloudsearch/pc`,
+    qq: 'https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp',
+    kuwo: 'https://kuwo.cn',
+    kugou: '',
+  } } });
+  ok(u1.j.applied?.includes('scrape_urls')
+    && chOf(u1.j, 'netease').url === `http://127.0.0.1:${neteaseSrv.address().port}/api/cloudsearch/pc`
+    && chOf(u1.j, 'netease').effective === `http://127.0.0.1:${neteaseSrv.address().port}/api/cloudsearch/pc`,
+    'B4 自定义地址原样保存并在 effective 生效（带回包）', JSON.stringify(chOf(u1.j, 'netease')));
+  ok(chOf(u1.j, 'qq').effective === 'https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp',
+    'B5 QQ 推荐地址带完整路径，不做归一直接用', JSON.stringify(chOf(u1.j, 'qq')));
+  ok(chOf(u1.j, 'kuwo').effective === 'http://search.kuwo.cn/r.s',
+    'B6 酷我站点根归一到 search 子域并补 /r.s（粘贴推荐地址即用）', JSON.stringify(chOf(u1.j, 'kuwo')));
+  ok(chOf(u1.j, 'kugou').url === '' && (chOf(u1.j, 'kugou').effective || '') === `http://127.0.0.1:${kugouSrv.address().port}/song_search_v2`,
+    'B7 空串=用默认链（env 光杆主机补 legacyPath /song_search_v2）', JSON.stringify(chOf(u1.j, 'kugou')));
+  const u2 = await api('POST', '/api/mc/settings', { token: T, body: { scrape_urls: { netease: 'https://interface.music.163.com/eapi/api/cloudsearch/pc', qq: '', kuwo: '', kugou: '' } } });
+  ok(chOf(u2.j, 'netease').effective === 'https://interface.music.163.com/api/cloudsearch/pc',
+    'B8 网易 eapi 地址归一到同主机 /api/ 路径（GET 直通，粘贴推荐地址即用）', JSON.stringify(chOf(u2.j, 'netease')));
+  // 先验后写：scrape_urls 不合法时连同一起发的 scrape_on 也不落库（不能落半套）
+  const before_on = cfg_now_on(await api('GET', '/api/mc/config', { token: T }));
+  const bad = await api('POST', '/api/mc/settings', { token: T, body: { scrape_on: ['qq'], scrape_urls: { netease: 'ftp://不合法', qq: '', kuwo: '', kugou: '' } } });
+  ok(bad.status === 400 && (bad.j.error || '').includes('http'), 'B9 非 http(s) 地址整体 400 并说明原因', JSON.stringify(bad.j));
+  const after_bad_cfg = await api('GET', '/api/mc/config', { token: T });
+  ok(cfg_now_on(after_bad_cfg) === before_on
+    && chOf(after_bad_cfg.j, 'netease').url === 'https://interface.music.163.com/eapi/api/cloudsearch/pc',
+    'B10 校验失败时一起发的 scrape_on 也没写入（先验后写，不落半套）',
+    `before=${before_on} after=${cfg_now_on(after_bad_cfg)} netease.url=${chOf(after_bad_cfg.j, 'netease').url}`);
+  // 还原：全空串回落 env/默认（C 段的测连通全走本机假上游）
+  await api('POST', '/api/mc/settings', { token: T, body: { scrape_urls: { netease: '', qq: '', kuwo: '', kugou: '' } } });
+  // 酷我全链（真下载 img1.kuwo.cn）不在假上游里测——封面 CDN 域名写死在 searchChannel 里，
+  // 本机假图床拦不下来；其解析分支 2026-10-14 已对真实 API 探针核过（Logs/probe-scrape-kuwo2.mjs）。
+
   // ---------- C. 渠道测连通（真搜 + 真下图，不落盘） ----------
   const c1 = await api('POST', '/api/mc/scrape/test', { token: T, body: { channel: 'netease' } });
   ok(c1.j.ok === true && c1.j.bytes >= 100 && (c1.j.url || '').includes('/netease-pic.jpg'), 'C1 网易：通，拿到图字节数与地址', JSON.stringify(c1.j));
+  ok((c1.j.endpoint || '') === `http://127.0.0.1:${neteaseSrv.address().port}/api/search/get`,
+    'C1b 测连通回包带 endpoint（实际请求端点亮给用户看）', JSON.stringify(c1.j.endpoint));
+  const c7 = await api('POST', '/api/mc/scrape/test', { token: T, body: { channel: 'kugou' } });
+  ok(c7.j.ok === true && (c7.j.url || '').includes('/imge.kugou.com/stdmusic/240/480.jpg') && !(c7.j.url || '').includes('singerimg'),
+    'C7 酷狗：跳过歌手头像（singerimg）、{size}→480，只下 imge 专辑封面', JSON.stringify(c7.j));
   const before = picHits.length;
   const c2 = await api('POST', '/api/mc/scrape/test', { token: T, body: { channel: 'itunes' } });
   ok(c2.j.ok === true && picHits.slice(before).includes('/itunes/cover600x600bb.jpg'), 'C2 iTunes：100x100 缩略图地址被改写成 600x600 再下载', JSON.stringify(c2.j));
@@ -229,8 +288,23 @@ try {
   const by = Object.fromEntries(entries.map((e) => [e.name, e.data]));
   ok(new Set(['setup.ps1', 'font.otf', '安装.cmd', '卸载.cmd', '使用说明.txt']).size === 5
     && ['setup.ps1', 'font.otf', '安装.cmd', '卸载.cmd', '使用说明.txt'].every((n) => by[n]), 'E7 包内五条目齐（含字体）', entries.map((e) => e.name).join('|'));
+  // v1.17.1：卸载包（轻量）——卸载逻辑在 setup.ps1 -Cmd uninstall，故脚本必须带；不带 8.4MB 字体与安装.cmd
+  const unRes = await fetch(B + '/api/mc/agent/package?mode=uninstall', { headers: { Authorization: 'Bearer ' + T, Origin: B } });
+  const unBuf = Buffer.from(await unRes.arrayBuffer());
+  ok(unRes.status === 200 && unBuf.slice(0, 2).toString('latin1') === 'PK', 'E6b 卸载包下载（ZIP 魔数）', `status=${unRes.status}`);
+  ok((unRes.headers.get('content-disposition') || '').includes(encodeURIComponent('悬浮歌词卸载包.zip')), 'E6c 卸载包文件名 RFC5987 中文名');
+  const unBy = Object.fromEntries(extractZip(unBuf).map((e) => [e.name, e.data]));
+  ok(['setup.ps1', '卸载.cmd', '使用说明.txt'].every((n) => unBy[n]) && !unBy['font.otf'] && !unBy['安装.cmd'],
+    'E6d 卸载包三件套（无字体/无安装.cmd）', Object.keys(unBy).join('|'));
+  ok(unBuf.length < 100_000, 'E6e 卸载包 <100KB（轻量）', String(unBuf.length));
   const ps = by['setup.ps1'];
   const psText = ps.toString('utf8');
+  // v1.17.1 回归（生产「安装成功但 0 台设备」根因）：PS5.1/.NET Framework 的 ServicePointManager
+  // 没有 DefaultWebProxy 静态属性，模板里那行裸赋值在 ErrorActionPreference=Stop 下直接炸死常驻进程
+  ok(psText.includes('[System.Net.WebRequest]::DefaultWebProxy = $null') && !psText.includes('ServicePointManager]::DefaultWebProxy'),
+    'E15a 代理绕过走 WebRequest.DefaultWebProxy（PS5.1 实测可赋值）；ServicePointManager 杀手行已除');
+  ok(psText.includes('trap {') && psText.includes('致命错误，代理退出'), 'E15b 常驻段 trap 兜底（未捕获异常写 agent.log 再退，不再静默死亡）');
+  ok(psText.includes('poll 失败 x') && psText.includes('poll 恢复'), 'E15c poll 失败/恢复都留痕（不再空 catch 吞掉连不上）');
   ok(ps[0] === 0xef && ps[1] === 0xbb && ps[2] === 0xbf, 'E8 setup.ps1 带 UTF-8 BOM（PowerShell 5.1 才不把中文读成乱码）');
   ok(psText.includes(`'${B}'`) && !psText.includes('__SERVER__') && !psText.includes('__KEY__') && !psText.includes('__FONT_FAMILY__'),
     'E9 占位符全替换（回连地址=下载来源）', B);

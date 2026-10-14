@@ -140,10 +140,10 @@
                 </div>
               </div>
 
-              <!-- ② 封面刮削：三渠道勾选（勾选顺序=优先级）+ 每渠道测连通 + 后台任务 -->
+              <!-- ② 封面刮削：渠道勾选（勾选顺序=优先级）+ 每渠道地址输入框（v1.17.1，itunes 保留现有模式不出框）+ 测连通 + 后台任务 -->
               <div class="card set-sec">
                 <h3><span class="material-icons ic-sm">image_search</span> 封面刮削</h3>
-                <div class="tip">给没有封面的歌（统计卡「未匹配封面」那些）从公开渠道补封面；勾选顺序就是优先级，第一家没刮到才试下一家</div>
+                <div class="tip">给没有封面的歌（统计卡「未匹配封面」那些）从公开渠道补封面；勾选顺序就是优先级，第一家没刮到才试下一家。地址留空用内置默认，填了推荐地址就以填的为准（保存后「实际请求」一栏会亮出真打的端点）</div>
                 <div v-for="ch in scrape.channels" :key="ch.id" class="sc-ch">
                   <label class="sc-chk" :title="'拖动排序=优先级（越靠上越先用）'">
                     <input v-model="scrapeOn" type="checkbox" :value="ch.id" />
@@ -153,9 +153,16 @@
                   <button class="small" :disabled="scrapeTests[ch.id] === 'testing'" @click="testChannel(ch.id)">
                     {{ scrapeTests[ch.id] === 'testing' ? '测试中…' : scrapeTests[ch.id] === 'ok' ? '✅ 通' : scrapeTests[ch.id] === 'bad' ? '❌ 不通' : '测连通' }}
                   </button>
+                  <template v-if="!ch.no_url">
+                    <div class="sc-row sc-url">
+                      <input v-model="scrapeUrls[ch.id]" class="grow" :disabled="setSaving" :placeholder="'默认：' + ch.rec" @keyup.enter="saveScrape" />
+                      <button class="small" :disabled="setSaving" title="把下面的推荐地址填进输入框" @click="scrapeUrls[ch.id] = ch.rec">填入推荐</button>
+                    </div>
+                    <div class="tip sc-rec">推荐地址：{{ ch.rec }}（不想手抄就点「填入推荐」）· 实际请求：{{ ch.effective }}</div>
+                  </template>
                 </div>
                 <div class="sc-row">
-                  <button class="small" :disabled="setSaving" @click="saveScrapeOn"><span class="material-icons ic-sm">save</span> 保存勾选</button>
+                  <button class="small" :disabled="setSaving" @click="saveScrape"><span class="material-icons ic-sm">save</span> 保存勾选与地址</button>
                   <button v-if="!scrape.running" class="small primary" :disabled="setSaving || scanning" @click="startScrape">
                     <span class="material-icons ic-sm">cloud_download</span> 开始刮削（{{ scrape.pending }} 首待补）
                   </button>
@@ -221,9 +228,11 @@
                 </div>
                 <div class="tip">{{ cfg.desk && cfg.desk.font_included ? '安装包自带思源黑体（SIL OFL 1.1，可再分发）' : '⚠️ 服务器缺字体文件，安装包将回退系统微软雅黑' }}</div>
                 <div class="sc-row">
-                  <button class="small primary" @click="downloadPkg"><span class="material-icons ic-sm">download</span> 下载 Windows 安装包{{ cfg.desk && cfg.desk.font_included ? '（含字体）' : '' }}</button>
+                  <button class="small primary" :disabled="pkgBusy" @click="downloadPkg"><span class="material-icons ic-sm">{{ pkgBusy ? 'hourglass_empty' : 'download' }}</span> {{ pkgBusy ? '正在打包下载…别重复点' : '下载 Windows 安装包' + (cfg.desk && cfg.desk.font_included ? '（含字体）' : '') }}</button>
+                  <button class="small" :disabled="pkgBusy" @click="downloadPkg('uninstall')"><span class="material-icons ic-sm">delete</span> 下载卸载包（轻量）</button>
                   <button class="small danger" title="轮换后所有已装设备立即失联，需重新下载安装包" @click="rotateKey"><span class="material-icons ic-sm">key</span> 轮换设备密钥</button>
                 </div>
+                <div class="tip">安装包自带 卸载.cmd（双击即卸载）；上面的「下载卸载包」是给安装包已删/只想要卸载的场景准备的小包。</div>
                 <div class="lab">已安装的电脑（{{ agents.length }} 台{{ agents.filter((a) => a.online).length ? '，' + agents.filter((a) => a.online).length + ' 台在线' : '' }}）</div>
                 <div v-if="agents.length" class="ag-list">
                   <div v-for="a in agents" :key="a.id" class="ag-row">
@@ -407,6 +416,10 @@ function applyCfg(c) {
   const sc = c.scrape || {};
   scrape.value = { ...scrape.value, ...sc };
   if (Array.isArray(sc.on)) scrapeOn.value = sc.on.slice();
+  // v1.17.1 渠道地址输入框：itunes(no_url) 不出框；回填服务器存的自定义地址（空=默认）
+  const urls = {};
+  for (const ch of (sc.channels || [])) if (!ch.no_url) urls[ch.id] = ch.url || '';
+  scrapeUrls.value = urls;
   const d = c.desk || {};
   desk.value = { on: d.on !== false, family: d.font_family || '', size: d.font_size || 36 };
 }
@@ -428,10 +441,13 @@ const poster = ref({ names: '', priority: 'embed', bg: 'color' });
 const lyr = ref({ api: '', sourceText: '', cached: 0, testMsg: '', testOk: false });
 const lyrTesting = ref(false);
 const scrapeOn = ref([]);            // 勾选的渠道 id（顺序 = 刮削优先级）
+const scrapeUrls = ref({});          // v1.17.1 渠道地址 { netease:'https://…', … }（空串=用默认；itunes 无此项）
 const scrapeTests = ref({});         // { netease: 'testing'|'ok'|'bad' }
 const scrape = ref({ channels: [], on: [], pending: 0, scraped: 0, running: false, done: 0, total: 0, found: 0, failed: 0, current: '', log: [], finished_at: 0 });
 const desk = ref({ on: true, family: '', size: 36 });
 const agents = ref([]);
+// 安装包 8.4MB（含字体），公网下载要几十秒——不锁按钮会被连点出一排重复下载
+const pkgBusy = ref(false);
 let scrapeTimer = null;
 let agentTimer = null;
 
@@ -471,10 +487,17 @@ async function saveRoot() {
   catch (e) { flash('保存失败：' + e.message); }
   setSaving.value = false;
 }
-async function saveScrapeOn() {
+async function saveScrape() {
   setSaving.value = true;
-  try { applyCfg(await api.post('/mc/settings', { scrape_on: scrapeOn.value })); flash('刮削渠道已保存（勾选顺序即优先级）'); }
-  catch (e) { flash('保存失败：' + e.message); }
+  // 勾选与地址一次保存（服务端先验后写：地址不合法整体 400，不会落半套）
+  const patch = { scrape_on: scrapeOn.value };
+  const trimmed = {};
+  for (const [k, v] of Object.entries(scrapeUrls.value)) trimmed[k] = String(v || '').trim();
+  patch.scrape_urls = trimmed;
+  try {
+    applyCfg(await api.post('/mc/settings', patch));
+    flash('刮削渠道已保存（勾选顺序即优先级；地址留空=用默认）');
+  } catch (e) { flash('保存失败：' + e.message); }
   setSaving.value = false;
 }
 async function testChannel(id) {
@@ -542,9 +565,15 @@ async function saveDeskFont() {
   catch (e) { flash('保存失败：' + e.message); }
   setSaving.value = false;
 }
-async function downloadPkg() {
-  try { await api.download('/mc/agent/package', '悬浮歌词安装包.zip'); }
+async function downloadPkg(mode) {
+  if (pkgBusy.value) return;
+  pkgBusy.value = true;
+  try {
+    if (mode === 'uninstall') await api.download('/mc/agent/package?mode=uninstall', '悬浮歌词卸载包.zip');
+    else await api.download('/mc/agent/package', '悬浮歌词安装包.zip');
+  }
   catch (e) { flash('下载失败：' + e.message); }
+  pkgBusy.value = false;
 }
 async function rotateKey() {
   if (!confirm('轮换密钥后所有已安装的电脑立即失联，需要重新下载安装包并重装。确定轮换？')) return;
@@ -798,7 +827,13 @@ async function rescan() {
 .opt label, .sc-chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
 .sc-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sc-row input[type='text'], .sc-row input:not([type]), .sc-row select { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; color: var(--text); font-size: 13px; min-width: 0; }
-.sc-ch { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; }
+/* 全局 select{width:100%} 会把字体下拉撑满整行（实测 930px），字号框/保存按钮被挤去第二行——
+   行内下拉改为吃剩余空间，不再独占 */
+.sc-row select { flex: 1 1 180px; width: auto; }
+.sc-ch { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; flex-wrap: wrap; }
+.sc-url { flex: 1 1 100%; padding-left: 24px; }   /* 地址输入框独占一行，左缘与渠道名对齐 */
+.sc-url input.grow { font-size: 12px; }
+.sc-rec { flex: 1 1 100%; padding-left: 24px; word-break: break-all; }
 .sc-ch:hover { background: var(--bg3); }
 .sc-chk b { font-size: 13px; }
 .sc-desc { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

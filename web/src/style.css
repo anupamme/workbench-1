@@ -1,4 +1,8 @@
 :root {
+  /* 深色主题下让浏览器原生控件（select 展开的选项列表/滚动条/日期控件）也走深色渲染——
+     不声明的话 Windows 浅色系统的 Chrome/Edge 弹出的选项列表是白底，而 option 文字继承了
+     近白的 --text → 白字白底「备选看不到」（v1.17.1 用户报障：音乐-设置-字体备选） */
+  color-scheme: dark;
   --bg: #14161c;
   --bg2: #1c1f27;
   --bg3: #242834;
@@ -18,6 +22,7 @@
 
 /* ========== 浅色主题（白天） ========== */
 [data-theme='light'] {
+  color-scheme: light; /* 跟 :root 的 dark 对应，浅色主题下原生控件走浅色渲染 */
   --bg: #eef2f7;
   --bg2: #ffffff;
   --bg3: #e5ebf3;
@@ -240,6 +245,8 @@ input, textarea, select {
 }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 textarea { resize: vertical; }
+/* 兜底：老浏览器/部分内核不认 color-scheme 弹层，给 option 显式上色，保证备选永远深底浅字 */
+select option { background: var(--bg2); color: var(--text); }
 
 .row { display: flex; gap: 10px; align-items: center; }
 .row .grow { flex: 1; }

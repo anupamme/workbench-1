@@ -460,8 +460,17 @@ try {
   ok(['音乐路径', '封面刮削', '音乐海报', '歌词API', '悬浮歌词'].every((t) => secs.includes(t)) && secs.length === 5,
     'K4 设置视图五段全渲染（路径/刮削/海报/歌词API/悬浮歌词）', secs.join('|'));
   ok((await p.locator('.zone .mc-set .sc-ch', { hasText: '网易' }).count()) === 1
-    && (await p.locator('.zone .mc-set .sc-ch .sc-chk input[type=checkbox]').count()) === 3,
-    'K5 封面刮削三渠道各带勾选框与测连通按钮');
+    && (await p.locator('.zone .mc-set .sc-ch .sc-chk input[type=checkbox]').count()) === 5,
+    'K5 封面刮削五渠道各带勾选框与测连通按钮');
+  // v1.17.1 渠道地址输入框：四家出框（itunes 按要求保留现有模式不出框）+ 推荐地址引导
+  ok((await p.locator('.zone .mc-set .sc-ch .sc-url input').count()) === 4,
+    'K5a 网易/QQ/酷狗/酷我四渠道各带地址输入框（iTunes 不出框）');
+  ok((await p.locator('.zone .mc-set .sc-ch button', { hasText: '填入推荐' }).count()) === 4,
+    'K5b 四渠道各带「填入推荐」按钮（引导粘贴推荐地址）');
+  ok((await p.locator('.zone .mc-set .tip.sc-rec', { hasText: '推荐地址' }).count()) === 4,
+    'K5c 四渠道下方各显示推荐地址与实际请求端点');
+  ok((await p.locator('.zone .mc-set button', { hasText: '保存勾选与地址' }).count()) === 1,
+    'K5d 保存按钮合并勾选与地址');
   ok((await p.locator('.zone .mc-set button', { hasText: '下载 Windows 安装包' }).count()) === 1
     && (await p.locator('.zone .mc-set button', { hasText: '轮换设备密钥' }).count()) === 1,
     'K6 悬浮歌词段带安装包下载与密钥轮换');

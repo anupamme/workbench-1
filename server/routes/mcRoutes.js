@@ -67,9 +67,15 @@ function configPayload(req) {
       api_source: svc.lyricsApiSource(),
       cached: svc.lyricsCachedCount(),
     },
-    // 封面刮削（v1.17.0）：渠道清单 + 勾选状态 + 库存计数（设置页三张渠道卡的原料）
+    // 封面刮削（v1.17.0；v1.17.1 五渠道+地址可配）：渠道清单 + 勾选状态 + 库存计数（设置页渠道卡的原料）
+    // url=用户自定义地址（空=默认）；effective=归一后实际会请求的端点；rec=推荐地址（引导粘贴）；itunes 按要求保留现有模式不出输入框
     scrape: {
-      channels: svc.SCRAPE_CHANNELS.map((c) => ({ id: c.id, name: c.name, desc: c.desc })),
+      channels: svc.SCRAPE_CHANNELS.map((c) => ({
+        id: c.id, name: c.name, desc: c.desc, no_url: !!c.noUrl,
+        url: c.noUrl ? '' : String(svc.scrapeUrlMap()[c.id] || ''),
+        effective: svc.scrapeEndpoint(c.id),
+        rec: c.noUrl ? '' : c.def,
+      })),
       on: svc.scrapeOnList(),
       ...svc.scrapeStatus(),
     },
@@ -93,6 +99,21 @@ router.post('/mc/settings', (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可修改' });
   const b = req.body || {};
   const applied = [];
+  // v1.17.1 刮削渠道地址表：先验后写（root 等键写库在前，这里校验失败要能整体拒绝，不能落半套）
+  let urlsPatch = null;
+  if (Object.prototype.hasOwnProperty.call(b, 'scrape_urls')) {
+    const validIds = new Set(svc.SCRAPE_CHANNELS.filter((c) => !c.noUrl).map((c) => c.id));
+    const inb = (b.scrape_urls && typeof b.scrape_urls === 'object' && !Array.isArray(b.scrape_urls)) ? b.scrape_urls : {};
+    const out = {};
+    for (const id of validIds) {
+      const v = String(inb[id] || '').trim().slice(0, 300);
+      if (v && !/^https?:\/\//i.test(v)) {
+        return res.status(400).json({ error: `渠道「${id}」的地址要以 http:// 或 https:// 开头（当前填的是 ${v.slice(0, 60)}）` });
+      }
+      out[id] = v; // 空串=用默认地址
+    }
+    urlsPatch = out;
+  }
   if (Object.prototype.hasOwnProperty.call(b, 'root')) {
     const raw = String(b.root || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
     if (raw) {
@@ -135,6 +156,10 @@ router.post('/mc/settings', (req, res) => {
     const valid = new Set(svc.SCRAPE_CHANNELS.map((c) => c.id));
     setSetting(db, 'mc_scrape_on', Array.isArray(b.scrape_on) ? b.scrape_on.filter((x) => valid.has(x)) : []);
     applied.push('scrape_on');
+  }
+  if (urlsPatch) {
+    setSetting(db, 'mc_scrape_urls', { ...svc.scrapeUrlMap(), ...urlsPatch });
+    applied.push('scrape_urls');
   }
   if (Object.prototype.hasOwnProperty.call(b, 'desk_on')) { agent.setDeskOn(!!b.desk_on); applied.push('desk_on'); }
   if (Object.prototype.hasOwnProperty.call(b, 'font_family')) { agent.setFontFamily(b.font_family); applied.push('font_family'); }
@@ -418,9 +443,11 @@ router.post('/mc/agent/rotate-key', (req, res) => {
 });
 router.get('/mc/agent/package', (req, res) => {
   if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可下载' });
-  const zip = agent.buildPackage(baseUrl(req), agent.getAgentKey());
+  const uninstall = req.query.mode === 'uninstall';
+  const zip = agent.buildPackage(baseUrl(req), agent.getAgentKey(), uninstall ? { uninstall: true } : {});
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent('悬浮歌词安装包.zip'));
+  res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''"
+    + encodeURIComponent(uninstall ? '悬浮歌词卸载包.zip' : '悬浮歌词安装包.zip'));
   res.send(zip);
 });
 

@@ -466,18 +466,46 @@ function stats() {
   return { total: r.total || 0, covers: r.covers || 0, nocover: r.nocover || 0, pending: r.pending || 0 };
 }
 
-// ---------- 封面刮削（v1.17.0）：三个公开渠道按勾选顺序补缺，只处理 has_cover=0 ----------
-// 全部是无需 Key 的公开检索接口；基址可用 env 覆盖（MC_SCRAP_NETEASE/QQ/ITUNES），
-// 一来生产哪条被墙可就地换镜像，二来 e2e 用假上游验证全链。
+// ---------- 封面刮削（v1.17.0；v1.17.1 加酷狗/酷我 + 每渠道地址可配）：公开渠道按勾选顺序补缺 ----------
+// 全部是无需 Key 的公开检索接口；地址优先级：设置页输入框(mc_scrape_urls) > env 覆盖 > 内置默认。
+// def=内置默认（就是设置页「推荐地址」那四条，粘贴即用——netease/kuwo 有内部归一，见 scrapeEndpoint）；
+// legacyPath=只填了光杆主机（无路径）时补的搜索路径——兼容旧 env base 语义与 e2e 假上游；
+// itunes 按用户要求保留现有模式（noUrl：不出输入框，仍走 env/内置）。
 const SCRAPE_CHANNELS = [
-  { id: 'netease', name: '网易云音乐', desc: 'music.163.com 公开搜索，中文曲库覆盖最好',
-    base: () => String(process.env.MC_SCRAP_NETEASE || 'https://music.163.com').replace(/\/+$/, '') },
-  { id: 'qq', name: 'QQ音乐', desc: 'c.y.qq.com 公开搜索 + y.gtimg.cn 封面 CDN',
-    base: () => String(process.env.MC_SCRAP_QQ || 'https://c.y.qq.com').replace(/\/+$/, ''),
-    picBase: () => String(process.env.MC_SCRAP_QQ_PIC || 'https://y.gtimg.cn').replace(/\/+$/, '') },
+  { id: 'netease', name: '网易云音乐', desc: '网易公开搜索，中文曲库覆盖最好',
+    def: 'https://interface.music.163.com/eapi/api/cloudsearch/pc', legacyPath: '/api/search/get', env: 'MC_SCRAP_NETEASE' },
+  { id: 'qq', name: 'QQ音乐', desc: 'QQ 公开搜索 + y.gtimg.cn 封面 CDN',
+    def: 'https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp', legacyPath: '/soso/fcgi-bin/client_search_cp', env: 'MC_SCRAP_QQ' },
+  { id: 'kugou', name: '酷狗音乐', desc: '酷狗公开搜索，stdmusic 专辑封面',
+    def: 'https://songsearch.kugou.com/song_search_v2', legacyPath: '/song_search_v2', env: 'MC_SCRAP_KUGOU' },
+  { id: 'kuwo', name: '酷我音乐', desc: '酷我公开搜索（albumcover 封面，命中率一般，当兜底）',
+    def: 'https://kuwo.cn', legacyPath: '/r.s', env: 'MC_SCRAP_KUWO' },
   { id: 'itunes', name: 'iTunes', desc: 'itunes.apple.com 公开搜索，英文曲库覆盖最好',
-    base: () => String(process.env.MC_SCRAP_ITUNES || 'https://itunes.apple.com').replace(/\/+$/, '') },
+    def: 'https://itunes.apple.com', legacyPath: '/search', env: 'MC_SCRAP_ITUNES', noUrl: true },
 ];
+// 用户自定义地址表：settings.mc_scrape_urls 存 {渠道id: '完整搜索端点'}；空串/缺项=用默认
+function scrapeUrlMap() {
+  const m = getSetting(db, 'mc_scrape_urls', null);
+  return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+}
+// 最终生效的搜索端点（含路径）。两处「粘贴推荐地址」归一（2026-10-14 实测）：
+// ① netease 的 eapi 端点要加密 POST、GET 只回空体——同主机的 /api/ 路径 GET 直通（/eapi/api/cloudsearch/pc → /api/cloudsearch/pc）
+// ② kuwo.cn 站点根只回 SPA HTML——真实搜索接口在 search 子域（search.kuwo.cn/r.s）
+function scrapeEndpoint(id) {
+  const ch = SCRAPE_CHANNELS.find((c) => c.id === id);
+  if (!ch) return '';
+  let raw = String(scrapeUrlMap()[id] || '').trim()
+    || (ch.env ? String(process.env[ch.env] || '').trim() : '')
+    || ch.def;
+  raw = raw.replace(/\/+$/, '');
+  if (id === 'netease' && raw.includes('/eapi/')) raw = raw.replace('/eapi/', '/');
+  if (id === 'kuwo' && /^https?:\/\/(www\.)?kuwo\.cn$/i.test(raw)) raw = 'http://search.kuwo.cn';
+  try {
+    const u = new URL(raw);
+    if (!u.pathname || u.pathname === '/') raw = u.origin + ch.legacyPath;
+  } catch { /* 非法 URL 原样交给 fetch 报错，测连通会把真实错误亮出来 */ }
+  return raw;
+}
 // 生效渠道（勾选）：settings.mc_scrape_on 存 JSON 数组；没存过/坏值 = 三个全开。
 // 显式存 [] = 全关（用户在设置页把三个勾全摘掉——别把它也回退成全开，那等于取消勾选无效），
 // 此时 startScrape 会如实报「所有渠道都被关掉了」。
@@ -496,26 +524,62 @@ async function fetchJson(url, ms = 8000) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
 }
-// 三渠道检索：回封面直链（拿不到回 null），实现各自独立 try——一家挂了别拖累下一家
+// 五渠道检索：回封面直链（拿不到回 null），实现各自独立 try——一家挂了别拖累下一家。
+// 端点一律走 scrapeEndpoint（设置页输入框 > env > 默认 + 归一），这里只管怎么调、怎么解析。
 async function searchChannel(ch, query) {
+  const ep = scrapeEndpoint(ch.id);
   if (ch.id === 'netease') {
-    const j = await fetchJson(`${ch.base()}/api/search/get?s=${query}&type=1&limit=5`);
-    const song = (j.result && Array.isArray(j.result.songs) && j.result.songs[0]) || null;
-    let url = song && song.album && song.album.picUrl;
-    if (!url && song && song.id) { // 老接口没回专辑图的补一刀 song/detail
-      const d = await fetchJson(`${ch.base()}/api/song/detail?id=${song.id}&ids=[${song.id}]`);
-      const s2 = (Array.isArray(d.songs) && d.songs[0]) || null;
-      url = s2 && (s2.al || {}).picUrl || (s2 && (s2.al || {}).blurPicUrl);
+    const j = await fetchJson(`${ep}?s=${query}&type=1&limit=8`);
+    const songs = (j.result && Array.isArray(j.result.songs)) ? j.result.songs : [];
+    for (const s of songs) { // cloudsearch 新形状 al.picUrl 与旧形状 album.picUrl 都认
+      const u = (s.al && s.al.picUrl) || (s.album && s.album.picUrl);
+      if (u) return u;
     }
-    return url || null;
+    const s0 = songs[0]; // 全没带专辑图 → 用第一首补一刀 song/detail（按端点同主机拼）
+    if (s0 && s0.id) {
+      const org = new URL(ep).origin;
+      const d = await fetchJson(`${org}/api/song/detail?id=${s0.id}&ids=[${s0.id}]`);
+      const s2 = (Array.isArray(d.songs) && d.songs[0]) || null;
+      const u2 = s2 && ((s2.al || {}).picUrl || (s2.al || {}).blurPicUrl);
+      if (u2) return u2;
+    }
+    return null;
   }
-  if (ch.id === 'qq') {
-    const j = await fetchJson(`${ch.base()}/soso/fcgi-bin/client_search_cp?w=${query}&format=json&n=5`);
+  if (ch.id === 'qq') { // search_for_qq_cp（推荐地址）与 client_search_cp（旧默认）回包同形状
+    const j = await fetchJson(`${ep}?w=${query}&format=json&n=5`);
     const list = j.data && j.data.song && j.data.song.list;
     const mid = Array.isArray(list) && list[0] && list[0].albumMid;
-    return mid ? `${ch.picBase()}/music/photo_new/T002R300x300M000${mid}.jpg` : null;
+    const pic = String(process.env.MC_SCRAP_QQ_PIC || 'https://y.gtimg.cn').replace(/\/+$/, '');
+    return mid ? `${pic}/music/photo_new/T002R300x300M000${mid}.jpg` : null;
   }
-  const j = await fetchJson(`${ch.base()}/search?term=${query}&media=music&limit=5`);
+  if (ch.id === 'kugou') {
+    const j = await fetchJson(`${ep}?keyword=${query}&page=1&pagesize=10`);
+    const lists = (j.data && Array.isArray(j.data.lists)) ? j.data.lists : [];
+    for (const it of lists) { // 只认 imge.kugou.com/stdmusic 专辑封面；singerimg 是歌手头像不是海报，宁缺毋滥
+      const img = String(it.Image || '');
+      if (img.includes('imge.kugou.com')) return img.replace('{size}', '480');
+    }
+    return null;
+  }
+  if (ch.id === 'kuwo') {
+    // r.s 回的是单引号伪 JSON，得换引号再 parse；条目质量参差——先挑非伴奏/KTV 的，没有再放宽
+    const res = await fetch(encUrl(`${ep}?all=${query}&ft=music&itemset=web_2013&client=kt&pn=0&rn=8&rformat=json&encoding=utf8`),
+      { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'WorkbenchMusic/1.0' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = JSON.parse((await res.text()).replace(/'/g, '"'));
+    const list = Array.isArray(d.abslist) ? d.abslist : [];
+    const pick = (it) => {
+      const s = String(it.web_albumpic_short || '');
+      return s ? 'http://img1.kuwo.cn/star/albumcover/' + s.replace(/^120\//, '500/') : '';
+    };
+    for (const it of list) {
+      if (!/(伴奏|KTV|片段|Live)/i.test(String(it.SONGNAME || ''))) { const u = pick(it); if (u) return u; }
+    }
+    for (const it of list) { const u = pick(it); if (u) return u; }
+    return null;
+  }
+  // itunes：保留现有模式
+  const j = await fetchJson(`${ep}?term=${query}&media=music&limit=5`);
   const r0 = (Array.isArray(j.results) && j.results[0]) || null;
   const art = r0 && (r0.artworkUrl100 || r0.artworkUrl60);
   return art ? art.replace('100x100bb.jpg', '600x600bb.jpg') : null;
@@ -531,18 +595,19 @@ async function downloadImage(url) {
   if (!isJpg && !isPng) throw new Error('不是 JPEG/PNG 图像');
   return buf;
 }
-// 渠道连通测试（设置页「测连通」）：真搜一首「周杰伦 晴天」+ 真下一张图，不落盘
+// 渠道连通测试（设置页「测连通」）：真搜一首「周杰伦 晴天」+ 真下一张图，不落盘。
+// 回包带 endpoint（实际请求的端点）——用户改了输入框后能立刻看见打的是哪儿。
 async function testScrapeChannel(id) {
   const ch = SCRAPE_CHANNELS.find((c) => c.id === id);
   if (!ch) return { ok: false, error: '未知渠道' };
   const t0 = Date.now();
   try {
     const url = await searchChannel(ch, '周杰伦 晴天');
-    if (!url) return { ok: false, ms: Date.now() - t0, channel: ch.id, error: '搜索通了但没返回封面地址（接口形状变了？）' };
+    if (!url) return { ok: false, ms: Date.now() - t0, channel: ch.id, endpoint: scrapeEndpoint(id), error: '搜索通了但没返回封面地址（接口形状变了？）' };
     const img = await downloadImage(url);
-    return { ok: true, ms: Date.now() - t0, channel: ch.id, url, bytes: img.length };
+    return { ok: true, ms: Date.now() - t0, channel: ch.id, endpoint: scrapeEndpoint(id), url, bytes: img.length };
   } catch (e) {
-    return { ok: false, ms: Date.now() - t0, channel: ch.id, error: e.name === 'TimeoutError' ? '连接超时（15 秒）' : (e.message || '连接失败') };
+    return { ok: false, ms: Date.now() - t0, channel: ch.id, endpoint: scrapeEndpoint(id), error: e.name === 'TimeoutError' ? '连接超时（15 秒）' : (e.message || '连接失败') };
   }
 }
 // 刮削任务：进程内后台跑（Cloudflare ~100s 墙内跑不完，绝不同步等完）。
@@ -647,5 +712,5 @@ module.exports = {
   DEFAULT_COVER_NAMES, DEFAULT_LYRICS_API,
   coverNamesSetting, coverPrioritySetting, fullBgSetting, lyricsApiSetting, lyricsApiSource,
   lyricsCachedCount, clearLyricsCache, testLyricsApi,
-  SCRAPE_CHANNELS, scrapeOnList, testScrapeChannel, startScrape, stopScrape, scrapeStatus,
+  SCRAPE_CHANNELS, scrapeOnList, scrapeUrlMap, scrapeEndpoint, testScrapeChannel, startScrape, stopScrape, scrapeStatus,
 };

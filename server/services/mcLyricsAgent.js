@@ -224,6 +224,8 @@ if ($Cmd -eq 'uninstall') {
 }
 
 # ---------- 常驻运行 ----------
+# 任何未捕获异常都要留下尸检线索再退——开机自启场景下静默死亡无从排障（0 台设备事故的教训）
+trap { try { Log ('致命错误，代理退出：' + $_.Exception.Message + ' @ ' + $_.InvocationInfo.PositionMessage) } catch { }; exit 1 }
 function Log([string]$s) {
   try {
     Add-Content -LiteralPath $LogFile -Value ((Get-Date -Format 'MM-dd HH:mm:ss') + ' ' + $s) -Encoding UTF8
@@ -249,8 +251,11 @@ public class WbTrustPolicy : ICertificatePolicy {
 }' -ErrorAction SilentlyContinue
 } catch { }
 try { [System.Net.ServicePointManager]::CertificatePolicy = New-Object WbTrustPolicy } catch { }
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-[System.Net.ServicePointManager]::DefaultWebProxy = $null
+try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
+# 注意：.NET Framework 的 ServicePointManager 没有 DefaultWebProxy 静态属性——裸赋值在
+# ErrorActionPreference=Stop 下抛 PropertyAssignmentException 直接炸死常驻进程（安装成功但
+# 0 台设备的根因）。绕系统代理的正确写法是 WebRequest.DefaultWebProxy（PS5.1 实测可赋值）。
+try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch { }
 
 # 设备 ID：PC + SHA256(机器GUID|计算机名) 前 12 位（登记进工作台「已安装电脑」清单）
 $deviceId = 'PC-unknown'
@@ -274,11 +279,14 @@ $st.recvAt = [DateTime]::MinValue
 $st.id = $deviceId
 $st.server = $server
 $st.key = $aKey
+$st.logfile = $LogFile
 
 # 后台 runspace：2 秒一次 poll（注册/心跳/配置/正在播放全在这一条 GET）
 $pollScript = @'
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
 $url = $st.server.TrimEnd('/') + '/api/mc/agent/poll?id=' + $st.id + '&key=' + $st.key + '&computer=' + [uri]::EscapeDataString($env:COMPUTERNAME) + '&v=1'
+$fail = 0
+$lastErr = ''
 while (-not $st.stop) {
   try {
     $r = Invoke-RestMethod -Uri $url -TimeoutSec 8
@@ -287,7 +295,20 @@ while (-not $st.stop) {
     $st.globalOn = [bool]$r.global_on
     if ($r.device) { $st.devShow = [bool]$r.device.show } else { $st.devShow = $true }
     $st.recvAt = [DateTime]::Now
-  } catch { }
+    if ($fail -gt 0 -and $st.logfile) {
+      try { Add-Content -LiteralPath $st.logfile -Value ((Get-Date -Format 'MM-dd HH:mm:ss') + ' poll 恢复（此前连续失败 ' + $fail + ' 次）') -Encoding UTF8 } catch { }
+    }
+    $fail = 0
+    $lastErr = ''
+  } catch {
+    $fail++
+    $msg = [string]$_.Exception.Message
+    # 失败要留痕：头 3 次、错误内容变化、每 15 次（约 30s）各记一条，恢复时记一条——别再空 catch 吞掉
+    if ($st.logfile -and ($fail -le 3 -or $msg -ne $lastErr -or ($fail % 15) -eq 0)) {
+      try { Add-Content -LiteralPath $st.logfile -Value ((Get-Date -Format 'MM-dd HH:mm:ss') + ' poll 失败 x' + $fail + '：' + $msg) -Encoding UTF8 } catch { }
+      $lastErr = $msg
+    }
+  }
   Start-Sleep -Seconds 2
 }
 '@
@@ -482,15 +503,19 @@ const README_TXT = '\uFEFF' + [
 ].join('\r\n');
 
 // baseUrl = 工作台对 Agent 可达的根地址（如 https://cc.in1912.cc）；key 嵌进脚本（key 即凭证）
-function buildPackage(baseUrl, key) {
+// opts.uninstall=true 出「卸载包」：setup.ps1 + 卸载.cmd + 使用说明（卸载走 setup.ps1 -Cmd uninstall，
+// 所以脚本必须带；不带 8.4MB 字体与安装.cmd，卸载场景要的就是个小包）
+function buildPackage(baseUrl, key, opts = {}) {
   const font = bundledFont();
   const ps = '\uFEFF' + PS_TEMPLATE
     .replace(/__SERVER__/g, String(baseUrl || '').trim().replace(/\/+$/, ''))
     .replace(/__KEY__/g, key)
     .replace(/__FONT_FAMILY__/g, font ? font.family : 'Microsoft YaHei');
   const entries = [{ name: 'setup.ps1', data: ps }];
-  if (font) entries.push({ name: font.name, data: fs.readFileSync(font.path) });
-  entries.push({ name: '安装.cmd', data: CMD_INSTALL });
+  if (!opts.uninstall) {
+    if (font) entries.push({ name: font.name, data: fs.readFileSync(font.path) });
+    entries.push({ name: '安装.cmd', data: CMD_INSTALL });
+  }
   entries.push({ name: '卸载.cmd', data: CMD_UNINSTALL });
   entries.push({ name: '使用说明.txt', data: README_TXT });
   return buildZip(entries);
