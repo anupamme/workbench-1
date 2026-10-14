@@ -143,8 +143,11 @@ try {
   await p.waitForSelector('.masonry h3', { timeout: 20000 });
   const h3s = (await p.locator('.masonry h3').allInnerTexts()).map((s) => s.trim());
   ok(h3s.includes('视频路径') && !h3s.includes('人工智能视频路径'), 'A3 「人工智能视频路径」已改名「视频路径」', h3s.join('|'));
-  ok(h3s.includes('音乐路径'), 'A4 设置页有「音乐路径」卡', h3s.join('|'));
-  ok(h3s.indexOf('视频路径') < h3s.indexOf('音乐路径'), 'A5 音乐路径排在视频路径下面', h3s.join('|'));
+  // v1.17.0：音乐三张卡（路径/海报/歌词API）整体搬进音乐页「设置」，本页只留指路卡
+  ok(h3s.includes('音乐设置') && !h3s.includes('音乐路径') && !h3s.includes('音乐海报') && !h3s.includes('歌词API'),
+    'A4 设置页只留「音乐设置」指路卡（旧三张卡已搬进音乐页）', h3s.join('|'));
+  ok((await p.locator('.masonry .card', { hasText: '音乐设置' }).locator('button', { hasText: '去音乐页设置' }).count()) === 1,
+    'A5 指路卡带「去音乐页设置」按钮（跳 /smart-home?tab=music）');
 
   // ---------- B. 音乐面板：统计卡 + 目录树 + 歌曲多列卡 + 整页不限宽 ----------
   await p.goto(`${B}/#/smart-home?tab=music`, { waitUntil: 'domcontentloaded' });
@@ -434,6 +437,39 @@ try {
   await p.waitForSelector('.mc-body', { timeout: 8000 });
   ok((await p.locator('.main.main-full').count()) === 1, 'I3 切回音乐页恢复不限宽');
   await p.screenshot({ path: path.join(ROOT, 'Logs', 'e2e-music-ui-panel.png'), fullPage: true });
+
+  // ---------- K. v1.17.0：收藏改名 + 管理员「设置」右栏整框切换 ----------
+  const favTab = p.locator('.mc-head button.vtab', { hasText: '收藏' });
+  ok((await favTab.innerText()).includes('收藏（1）') && !(await favTab.innerText()).includes('我的收藏'),
+    'K1 顶部视图切换改名「收藏（N）」（不再是「我的收藏」）', await favTab.innerText());
+  await favTab.click();
+  await p.waitForSelector('.zone .fav-row', { timeout: 8000 });
+  ok((await p.locator('.zone-head').innerText()).includes('收藏'), 'K2 点收藏右栏切到收藏视图');
+  await p.locator('.mc-head button.vtab', { hasText: '音乐库' }).click();
+  // 面板经页面切换重挂载后停在「根目录」（只有子目录、没有歌曲卡）——验证切回音乐库要看
+  // vtab 选中态，不能等 .zone .mc-grid（根目录本来就不渲染它）
+  await p.locator('.mc-head button.vtab.pri', { hasText: '音乐库' }).waitFor({ timeout: 8000 });
+
+  const setBtn = p.locator('.mc-head button.vtab', { hasText: '设置' });
+  ok((await setBtn.count()) === 1, 'K3 管理员头部有「设置」按钮（成员没有）');
+  await setBtn.click();
+  await p.waitForSelector('.zone .mc-set', { timeout: 8000 });
+  // h3 里 Material Icons 连字文本（folder/image_search…）会混进 innerText，先剥掉再比对；
+  // 空白也全去掉——模板写「歌词 API」（带空格），断言按无空白比对免得连字/空格细节绑死
+  const secs = (await p.locator('.zone .mc-set .set-sec h3').allInnerTexts()).map((s) => s.trim().replace(/^[a-z_]+\s*/, '').replace(/\s+/g, ''));
+  ok(['音乐路径', '封面刮削', '音乐海报', '歌词API', '悬浮歌词'].every((t) => secs.includes(t)) && secs.length === 5,
+    'K4 设置视图五段全渲染（路径/刮削/海报/歌词API/悬浮歌词）', secs.join('|'));
+  ok((await p.locator('.zone .mc-set .sc-ch', { hasText: '网易' }).count()) === 1
+    && (await p.locator('.zone .mc-set .sc-ch .sc-chk input[type=checkbox]').count()) === 3,
+    'K5 封面刮削三渠道各带勾选框与测连通按钮');
+  ok((await p.locator('.zone .mc-set button', { hasText: '下载 Windows 安装包' }).count()) === 1
+    && (await p.locator('.zone .mc-set button', { hasText: '轮换设备密钥' }).count()) === 1,
+    'K6 悬浮歌词段带安装包下载与密钥轮换');
+  ok((await p.locator('.zone .mc-set .tip', { hasText: '还没有电脑安装' }).count()) === 1,
+    'K7 无设备时如实显示「还没有电脑安装」');
+  await p.locator('.zone-head button', { hasText: '返回音乐库' }).click();
+  await p.locator('.mc-head button.vtab.pri', { hasText: '音乐库' }).waitFor({ timeout: 8000 });
+  ok((await p.locator('.zone .mc-set').count()) === 0, 'K8 「返回音乐库」整框切回曲库');
 
   ok(perr.length === 0, 'J1 全程无前端 JS 报错', perr.join(' | '));
 } catch (e) {

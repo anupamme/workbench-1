@@ -101,6 +101,7 @@ const EXEMPT = ['/auth/login', '/auth/fnos-login', '/health', '/tile', '/map-sta
   '/im/callback', // IM 连接器 OAuth 回跳（v1.10.5，飞书那边跳回来，没有工作台登录态；只认一次性 state）
   '/ha/hook', // Home Assistant webhook 反调（v1.14.0：HA 自动化 RESTful 动作，key 即凭证，路由内自校验）
   '/pets/desktop', // 桌面宠物（key 即凭证：state/frame/action）
+  '/mc/agent/poll', // 悬浮歌词代理（v1.17.0：精确匹配这一条，key 即凭证——注册/心跳/配置/正在播放一条 GET；/mc/agent/package 下载必须留在登录闸内，别放前缀 '/mc/agent'）
   '/share', '/note-intake']; // 笔记分享（token+4位码即凭证）/ 外部写入令牌（v1.9.39）。⚠️ 路由内一律 403/404，绝不 401
 app.use('/api', (req, res, next) => {
   // 数字人参考图公网直取（v1.12.1）：Vivix 服务器建会话时要下载 source_images 的 URL，它没有

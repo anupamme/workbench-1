@@ -1364,6 +1364,15 @@ CREATE TABLE IF NOT EXISTS mc_favorites (
   created_at TEXT DEFAULT (datetime('now','localtime')),
   UNIQUE(user_id, track_id)
 );
+-- 悬浮歌词代理登记（v1.17.0，主库——家庭共享）：设备装了桌面歌词脚本后每次 poll 自动 upsert；
+-- 凭证是 settings.mc_agent_key（32hex，key 即凭证模式，照电脑监控/剪贴板代理），不经用户 token。
+-- show=播放时是否在这台设备显示桌面歌词（按设备开关，与全局 mc_desk_on 相与）。
+CREATE TABLE IF NOT EXISTS mc_lyrics_agents (
+  id TEXT PRIMARY KEY, name TEXT DEFAULT '', computer TEXT DEFAULT '',
+  agent_version TEXT DEFAULT '', ip TEXT DEFAULT '',
+  first_seen INTEGER DEFAULT 0, last_seen INTEGER DEFAULT 0, polls INTEGER DEFAULT 0,
+  show INTEGER DEFAULT 1, cfg_json TEXT DEFAULT '{}'
+);
 -- 家庭与子女（按 family 共享开关路由：开=读主库全员共用，关=读各租户库独立）
 -- 结构与租户库同名表一致（routedDb 选库，两边共用同一份 DDL 定义见上方业务表）
 CREATE TABLE IF NOT EXISTS family_items (
@@ -1935,6 +1944,11 @@ addCol(db, 'vibe_jobs', 'engine', "TEXT DEFAULT 'vibeasr'");
 // 扫描时 meta_ver !== 当前版本的文件会强制重解析一遍（mtime/size 没变也重来），
 // 这样用户点一次「重新扫描」乱码就自愈，无需动文件。
 addCol(db, 'mc_tracks', 'meta_ver', 'INTEGER DEFAULT 0');
+// 封面刮削（v1.17.0，仅主库——mc 表本就家庭共享、不在 forEachTenant）：
+// cover_source=刮中渠道（netease/qq/itunes），scraped_at=刮中时间；has_cover=3 表示封面来自刮削
+// （文件与内嵌共用 data/mc/covers/<id>.jpg；重扫守卫见 mcService.scanLibrary——别把刮来的封面冲掉）
+addCol(db, 'mc_tracks', 'cover_source', "TEXT DEFAULT ''");
+addCol(db, 'mc_tracks', 'scraped_at', 'INTEGER DEFAULT 0');
 // engine 列就位后再建索引（旧库列是 addCol 补的，索引不能随主 DDL 建，否则列未就绪时启动会崩）
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_vibe_jobs_pending2 ON vibe_jobs(status, engine, id)'); } catch {}
 // 存量回填：老记录的 test_id/test_title/summary 从档案 JSON 带出（每次启动只处理空列行，幂等）

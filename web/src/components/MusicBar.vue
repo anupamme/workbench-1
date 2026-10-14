@@ -112,7 +112,6 @@
 // v1.16.1 三处改动：① 唱片 12s/圈 → 60s/圈（用户：转太快，至少慢 5 倍）② 全部图标改 Material Icons
 // 单色字体（原彩色 emoji 太跳）③ 歌词三态：已唱过最浅 / 当前行最亮 / 未唱中间档，收藏夹行内可加可删。
 import { computed, nextTick, ref, watch } from 'vue';
-import { api } from '../api';
 import {
   musicState as music, playAt, playList, toggle, next, prev, seek, setVolume, cycleLoop,
   coverUrl, fmtTime, parseLrc, isFav, toggleFav, loadFavs, enqueue, removeFromQueue, loadMcCfg,
@@ -122,7 +121,7 @@ const barEl = ref(null);
 const lyEl = ref(null);
 const listOpen = ref(false);
 const listView = ref('queue'); // queue=播放列表 / fav=我的收藏
-const favTracks = ref([]);
+const favTracks = computed(() => music.favTracks); // v1.17.0 起共享一份（musicState），收藏两处永远同步
 const seeking = ref(false);
 
 const cur = computed(() => (music.index >= 0 ? music.queue[music.index] : null));
@@ -162,21 +161,18 @@ async function onFav() {
   if (!cur.value) return;
   if (isFav(cur.value.id)) { openFavs(); return; } // 已收藏再点 = 进收藏夹（需求：收藏图标可进入个人收藏夹）
   await toggleFav(cur.value);
-  await refreshFavs();
+  await loadFavs(); // 共享数据：ids + 完整行一起刷新
 }
-async function refreshFavs() {
-  try { const r = await api.get('/mc/favorites'); favTracks.value = r.tracks || []; } catch { favTracks.value = []; }
-}
-async function openFavs() { listView.value = 'fav'; await refreshFavs(); }
+async function openFavs() { listView.value = 'fav'; await loadFavs(); }
 function playFav(i) { playList(favTracks.value, i); }
 // 收藏夹/播放列表的行内操作（v1.16.1：收藏夹要能加能删，不必回音乐页）
-async function favRow(t) { await toggleFav(t); await refreshFavs(); loadFavs(); }
-async function removeFav(t) { await toggleFav(t); await refreshFavs(); loadFavs(); }
+async function favRow(t) { await toggleFav(t); await loadFavs(); }
+async function removeFav(t) { await toggleFav(t); await loadFavs(); }
 function enqueueFav(t) { enqueue(t); listView.value = 'queue'; }
 
 
 // 收藏数据等条真打开再拉（组件随 App 常驻挂载，别在启动时空跑两条请求）；配置同理（海报/歌词 API）
-watch(() => music.barOpen, (open) => { if (open) { loadFavs(); refreshFavs(); loadMcCfg(); } });
+watch(() => music.barOpen, (open) => { if (open) { loadFavs(); loadMcCfg(); } });
 </script>
 
 <style scoped>

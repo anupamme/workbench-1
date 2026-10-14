@@ -390,7 +390,7 @@ function scanLibrary() {
   let added = 0, updated = 0, kept = 0, removed = 0, files = 0;
   try {
     fs.mkdirSync(COVER_DIR, { recursive: true });
-    const existing = new Map(db.prepare('SELECT id, path, size, mtime, meta_ver FROM mc_tracks').all().map((r) => [r.path, r]));
+    const existing = new Map(db.prepare('SELECT id, path, size, mtime, meta_ver, has_cover FROM mc_tracks').all().map((r) => [r.path, r]));
     const seen = new Set();
     const walk = (dir, rel, depth) => {
       if (depth > 8 || files >= SCAN_FILE_CAP) return;
@@ -432,9 +432,15 @@ function scanLibrary() {
           try { fs.writeFileSync(path.join(COVER_DIR, id + '.jpg'), meta.picture); embOk = true; } catch { /* 落盘失败按无封面 */ }
         }
         const hasDir = !!dirCover(dir);
-        const pick = coverPrioritySetting() === 'dir'
+        let pick = coverPrioritySetting() === 'dir'
           ? (hasDir ? 2 : (embOk ? 1 : 0))
           : (embOk ? 1 : (hasDir ? 2 : 0));
+        // v1.17.0 刮削守卫：文件变了但重解析后既没内嵌也没目录封面、而这条之前刮到过封面
+        // （has_cover=3 且文件还在）——保留刮削结果，别让「重新扫描」把刮来的封面清零。
+        // 有内嵌/目录封面时照常覆盖（那是更权威的来源，刮削只是补缺）。
+        if (pick === 0 && old && old.has_cover === 3) {
+          try { if (fs.existsSync(path.join(COVER_DIR, id + '.jpg'))) pick = 3; } catch { /* 文件不在就真的清零 */ }
+        }
         db.prepare('UPDATE mc_tracks SET has_cover=? WHERE id=?').run(pick, id);
       }
     };
@@ -458,6 +464,145 @@ function stats() {
     SUM(CASE WHEN has_cover=0 THEN 1 ELSE 0 END) nocover,
     SUM(CASE WHEN has_cover=0 OR artist='' THEN 1 ELSE 0 END) pending FROM mc_tracks`).get();
   return { total: r.total || 0, covers: r.covers || 0, nocover: r.nocover || 0, pending: r.pending || 0 };
+}
+
+// ---------- 封面刮削（v1.17.0）：三个公开渠道按勾选顺序补缺，只处理 has_cover=0 ----------
+// 全部是无需 Key 的公开检索接口；基址可用 env 覆盖（MC_SCRAP_NETEASE/QQ/ITUNES），
+// 一来生产哪条被墙可就地换镜像，二来 e2e 用假上游验证全链。
+const SCRAPE_CHANNELS = [
+  { id: 'netease', name: '网易云音乐', desc: 'music.163.com 公开搜索，中文曲库覆盖最好',
+    base: () => String(process.env.MC_SCRAP_NETEASE || 'https://music.163.com').replace(/\/+$/, '') },
+  { id: 'qq', name: 'QQ音乐', desc: 'c.y.qq.com 公开搜索 + y.gtimg.cn 封面 CDN',
+    base: () => String(process.env.MC_SCRAP_QQ || 'https://c.y.qq.com').replace(/\/+$/, ''),
+    picBase: () => String(process.env.MC_SCRAP_QQ_PIC || 'https://y.gtimg.cn').replace(/\/+$/, '') },
+  { id: 'itunes', name: 'iTunes', desc: 'itunes.apple.com 公开搜索，英文曲库覆盖最好',
+    base: () => String(process.env.MC_SCRAP_ITUNES || 'https://itunes.apple.com').replace(/\/+$/, '') },
+];
+// 生效渠道（勾选）：settings.mc_scrape_on 存 JSON 数组；没存过/坏值 = 三个全开。
+// 显式存 [] = 全关（用户在设置页把三个勾全摘掉——别把它也回退成全开，那等于取消勾选无效），
+// 此时 startScrape 会如实报「所有渠道都被关掉了」。
+function scrapeOnList() {
+  // 注意 getSetting 本身就 JSON.parse 过（db.js）——这里再 String()+JSON.parse 会把数组打成
+  // "qq,netease" 然后解析失败回落全开（v1.17.0 e2e B1/B2 抓到的真 bug），直接用返回值。
+  const list = getSetting(db, 'mc_scrape_on', null);
+  if (!Array.isArray(list)) return SCRAPE_CHANNELS.map((c) => c.id);
+  const valid = new Set(SCRAPE_CHANNELS.map((c) => c.id));
+  return [...new Set(list.filter((x) => valid.has(x)))]; // 顺序保留=刮削优先级；去重防手写重复
+}
+// URL 里非 ASCII 百分号编码（同 fetchLyrics 的 q()）
+const encUrl = (u) => u.replace(/[^!-~]/g, (c) => encodeURIComponent(c));
+async function fetchJson(url, ms = 8000) {
+  const res = await fetch(encUrl(url), { signal: AbortSignal.timeout(ms), headers: { 'User-Agent': 'WorkbenchMusic/1.0' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+// 三渠道检索：回封面直链（拿不到回 null），实现各自独立 try——一家挂了别拖累下一家
+async function searchChannel(ch, query) {
+  if (ch.id === 'netease') {
+    const j = await fetchJson(`${ch.base()}/api/search/get?s=${query}&type=1&limit=5`);
+    const song = (j.result && Array.isArray(j.result.songs) && j.result.songs[0]) || null;
+    let url = song && song.album && song.album.picUrl;
+    if (!url && song && song.id) { // 老接口没回专辑图的补一刀 song/detail
+      const d = await fetchJson(`${ch.base()}/api/song/detail?id=${song.id}&ids=[${song.id}]`);
+      const s2 = (Array.isArray(d.songs) && d.songs[0]) || null;
+      url = s2 && (s2.al || {}).picUrl || (s2 && (s2.al || {}).blurPicUrl);
+    }
+    return url || null;
+  }
+  if (ch.id === 'qq') {
+    const j = await fetchJson(`${ch.base()}/soso/fcgi-bin/client_search_cp?w=${query}&format=json&n=5`);
+    const list = j.data && j.data.song && j.data.song.list;
+    const mid = Array.isArray(list) && list[0] && list[0].albumMid;
+    return mid ? `${ch.picBase()}/music/photo_new/T002R300x300M000${mid}.jpg` : null;
+  }
+  const j = await fetchJson(`${ch.base()}/search?term=${query}&media=music&limit=5`);
+  const r0 = (Array.isArray(j.results) && j.results[0]) || null;
+  const art = r0 && (r0.artworkUrl100 || r0.artworkUrl60);
+  return art ? art.replace('100x100bb.jpg', '600x600bb.jpg') : null;
+}
+// 下图：魔数（JPEG/PNG）+ 尺寸护栏（<100B 是坏响应，>5MB 不值得）
+async function downloadImage(url) {
+  const res = await fetch(encUrl(url), { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'WorkbenchMusic/1.0' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 100) throw new Error('图片太小（<100B，疑似错误页）');
+  if (buf.length > 5 * 1024 * 1024) throw new Error('图片超过 5MB 上限');
+  const isJpg = buf[0] === 0xff && buf[1] === 0xd8, isPng = buf[0] === 0x89 && buf[1] === 0x50;
+  if (!isJpg && !isPng) throw new Error('不是 JPEG/PNG 图像');
+  return buf;
+}
+// 渠道连通测试（设置页「测连通」）：真搜一首「周杰伦 晴天」+ 真下一张图，不落盘
+async function testScrapeChannel(id) {
+  const ch = SCRAPE_CHANNELS.find((c) => c.id === id);
+  if (!ch) return { ok: false, error: '未知渠道' };
+  const t0 = Date.now();
+  try {
+    const url = await searchChannel(ch, '周杰伦 晴天');
+    if (!url) return { ok: false, ms: Date.now() - t0, channel: ch.id, error: '搜索通了但没返回封面地址（接口形状变了？）' };
+    const img = await downloadImage(url);
+    return { ok: true, ms: Date.now() - t0, channel: ch.id, url, bytes: img.length };
+  } catch (e) {
+    return { ok: false, ms: Date.now() - t0, channel: ch.id, error: e.name === 'TimeoutError' ? '连接超时（15 秒）' : (e.message || '连接失败') };
+  }
+}
+// 刮削任务：进程内后台跑（Cloudflare ~100s 墙内跑不完，绝不同步等完）。
+// 只补 has_cover=0 的行；每首间隔 300ms 对上游礼貌一点；停止靠 stop 标志（下一首间隙生效）。
+let scrapeJob = { running: false, total: 0, done: 0, found: 0, failed: 0, current: '', log: [], started_at: 0, finished_at: 0, error: '' };
+let scrapeAbort = false;
+function scrapeStatus() {
+  const pending = db.prepare('SELECT COUNT(*) n FROM mc_tracks WHERE has_cover=0').get().n || 0;
+  const scraped = db.prepare('SELECT COUNT(*) n FROM mc_tracks WHERE has_cover=3').get().n || 0;
+  return { ...scrapeJob, pending, scraped };
+}
+function startScrape() {
+  if (scrapeJob.running) return { ok: false, error: '刮削已在进行中' };
+  const rows = db.prepare(`SELECT id, title, artist FROM mc_tracks WHERE has_cover=0 ORDER BY id`).all();
+  if (!rows.length) return { ok: false, error: '没有待刮削的歌曲（全部已有封面）' };
+  const on = SCRAPE_CHANNELS.filter((c) => scrapeOnList().includes(c.id));
+  if (!on.length) return { ok: false, error: '所有渠道都被关掉了，先在设置里勾选至少一个' };
+  scrapeJob = { running: true, total: rows.length, done: 0, found: 0, failed: 0, current: '', log: [], started_at: Date.now(), finished_at: 0, error: '' };
+  scrapeAbort = false;
+  (async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const pushLog = (s) => { scrapeJob.log.push(s); if (scrapeJob.log.length > 200) scrapeJob.log.splice(0, scrapeJob.log.length - 200); };
+    try {
+      for (const t of rows) {
+        if (scrapeAbort) break;
+        scrapeJob.current = `${t.artist ? t.artist + ' - ' : ''}${t.title}`;
+        let got = false;
+        const query = encUrl(`${t.artist || ''} ${t.title || ''}`.trim());
+        for (const ch of on) {
+          if (scrapeAbort) break;
+          try {
+            const url = await searchChannel(ch, query);
+            if (!url) continue;
+            const buf = await downloadImage(url);
+            fs.writeFileSync(path.join(COVER_DIR, t.id + '.jpg'), buf);
+            db.prepare('UPDATE mc_tracks SET has_cover=3, cover_source=?, scraped_at=? WHERE id=?').run(ch.id, Date.now(), t.id);
+            scrapeJob.found++; got = true;
+            pushLog(`✓ ${scrapeJob.current}（${ch.name}）`);
+            break; // 第一个刮中即止——勾选顺序就是优先级
+          } catch (e) {
+            pushLog(`· ${scrapeJob.current} ${ch.name} 未命中（${e.name === 'TimeoutError' ? '超时' : e.message}）`);
+          }
+        }
+        if (!got) { scrapeJob.failed++; if (scrapeJob.done % 20 === 0) pushLog(`✗ ${scrapeJob.current} 三个渠道都没刮到`); }
+        scrapeJob.done++;
+        await sleep(300);
+      }
+    } catch (e) {
+      scrapeJob.error = e.message || String(e);
+    } finally {
+      scrapeJob.running = false; scrapeJob.current = ''; scrapeJob.finished_at = Date.now();
+      pushLog(scrapeAbort ? `已停止：完成 ${scrapeJob.done}/${scrapeJob.total}，刮到 ${scrapeJob.found} 张` : `完成：${scrapeJob.found}/${scrapeJob.total} 张刮到封面`);
+    }
+  })();
+  return { ok: true, total: rows.length };
+}
+function stopScrape() {
+  if (!scrapeJob.running) return { ok: false, error: '没有正在进行的刮削' };
+  scrapeAbort = true;
+  return { ok: true };
 }
 
 // ---------- LRCLIB 歌词：优先精确 get，404 再 search 取第一条带 syncedLyrics 的 ----------
@@ -502,4 +647,5 @@ module.exports = {
   DEFAULT_COVER_NAMES, DEFAULT_LYRICS_API,
   coverNamesSetting, coverPrioritySetting, fullBgSetting, lyricsApiSetting, lyricsApiSource,
   lyricsCachedCount, clearLyricsCache, testLyricsApi,
+  SCRAPE_CHANNELS, scrapeOnList, testScrapeChannel, startScrape, stopScrape, scrapeStatus,
 };

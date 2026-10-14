@@ -4,12 +4,15 @@
 //    /vol2/1000/音乐，但界面上只想填 /音乐（2026-10-13 需求原话）。
 //  · 曲库先扫进主库 mc_tracks（家庭共享），列表/树/统计都查库不直读磁盘；首次访问库空时自动扫一遍。
 //  · 收藏 mc_favorites 按 user_id+track_id；歌词走 LRCLIB（免费无 Key），结果缓存进 mc_tracks。
+// v1.17.0 增量：封面刮削（渠道测试/勾选/后台任务）+ 悬浮桌面歌词（正在播放上报 / agent poll
+// （EXEMPT，key 即凭证）/ 设备管理 / 安装包下载）。除 /mc/agent/poll 外全部仍走登录闸。
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { db, getSetting, setSetting } = require('../db');
 const { AUDIO_MIME } = require('../lib/audioMeta');
 const svc = require('../services/mcService');
+const agent = require('../services/mcLyricsAgent');
 
 const router = express.Router();
 const isAdmin = (req) => !!req.user && req.user.role === 'admin';
@@ -22,6 +25,20 @@ function resolveInRoot(rel) {
   const normRoot = path.resolve(root) + path.sep;
   if (full !== path.resolve(root) && !full.startsWith(normRoot)) return null;
   return full;
+}
+
+// 代理安装包回连地址：Origin → Referer 根 → external_base_url 设置 → x-forwarded-proto + host
+// （照桌面通知代理的探测顺序；从哪儿下载就嵌哪儿的地址——内网下载嵌内网、公网下载嵌公网）
+function baseUrl(req) {
+  const o = String(req.headers.origin || '').trim();
+  if (/^https?:\/\//i.test(o)) return o.replace(/\/+$/, '');
+  const ref = String(req.headers.referer || '').trim();
+  const m = /^https?:\/\/[^\/\s]+/i.exec(ref);
+  if (m) return m[0].replace(/\/+$/, '');
+  const ext = String(getSetting(db, 'external_base_url', '') || '').trim();
+  if (/^https?:\/\//i.test(ext)) return ext.replace(/\/+$/, '');
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  return (proto + '://' + (req.headers.host || 'localhost')).replace(/\/+$/, '');
 }
 function trackById(id) {
   const n = Number(id);
@@ -49,6 +66,21 @@ function configPayload(req) {
       api_default: svc.DEFAULT_LYRICS_API,
       api_source: svc.lyricsApiSource(),
       cached: svc.lyricsCachedCount(),
+    },
+    // 封面刮削（v1.17.0）：渠道清单 + 勾选状态 + 库存计数（设置页三张渠道卡的原料）
+    scrape: {
+      channels: svc.SCRAPE_CHANNELS.map((c) => ({ id: c.id, name: c.name, desc: c.desc })),
+      on: svc.scrapeOnList(),
+      ...svc.scrapeStatus(),
+    },
+    // 悬浮歌词（v1.17.0）：全局开关 + 字体设置 + 安装包字体在位 + key 是否已生成
+    desk: {
+      on: agent.deskOn(),
+      font_family: agent.fontFamilySetting(),
+      font_size: agent.fontSizeSetting(),
+      font_options: agent.FONT_OPTIONS,
+      font_included: !!agent.bundledFont(),
+      agent_key_set: /^[0-9a-f]{32}$/.test(String(getSetting(db, 'mc_agent_key', '') || '')),
     },
     is_admin: isAdmin(req),
   };
@@ -98,6 +130,15 @@ router.post('/mc/settings', (req, res) => {
     setSetting(db, 'mc_lyrics_api', api.slice(0, 300));
     applied.push('lyrics_api');
   }
+  // v1.17.0 四个新键：刮削渠道勾选（数组，勾选顺序=刮削优先级）+ 悬浮歌词开关/字体/字号
+  if (Object.prototype.hasOwnProperty.call(b, 'scrape_on')) {
+    const valid = new Set(svc.SCRAPE_CHANNELS.map((c) => c.id));
+    setSetting(db, 'mc_scrape_on', Array.isArray(b.scrape_on) ? b.scrape_on.filter((x) => valid.has(x)) : []);
+    applied.push('scrape_on');
+  }
+  if (Object.prototype.hasOwnProperty.call(b, 'desk_on')) { agent.setDeskOn(!!b.desk_on); applied.push('desk_on'); }
+  if (Object.prototype.hasOwnProperty.call(b, 'font_family')) { agent.setFontFamily(b.font_family); applied.push('font_family'); }
+  if (Object.prototype.hasOwnProperty.call(b, 'font_size')) { agent.setFontSize(b.font_size); applied.push('font_size'); }
   res.json({ ok: true, applied, ...configPayload(req) });
 });
 
@@ -134,7 +175,7 @@ function ensureScanned() {
 router.get('/mc/tree', (req, res) => {
   const rel = String(req.query.dir || '').replace(/\\/g, '/').replace(/^\/+/, '');
   const full = resolveInRoot(rel);
-  if (!full) return res.status(400).json({ error: svc.mcRootSetting() ? '路径越界' : '尚未配置音乐目录，请先到「设置 → 音乐路径」填写' });
+  if (!full) return res.status(400).json({ error: svc.mcRootSetting() ? '路径越界' : '尚未配置音乐目录，请先点音乐页右上角「设置」填写音乐路径' });
   let names;
   try { names = fs.readdirSync(full); } catch { return res.status(400).json({ error: '读取目录失败（目录不存在或无权限）' }); }
   const dirs = [], files = [];
@@ -160,7 +201,7 @@ router.get('/mc/library', (req, res) => {
   ensureScanned();
   const rel = String(req.query.dir || '').replace(/\\/g, '/').replace(/^\/+/, '');
   const root = svc.resolveRoot(svc.mcRootSetting()).root;
-  if (!root) return res.status(400).json({ error: '尚未配置音乐目录，请先到「设置 → 音乐路径」填写' });
+  if (!root) return res.status(400).json({ error: '尚未配置音乐目录，请先点音乐页右上角「设置」填写音乐路径' });
   const esc = rel.replace(/\\/g, '/');
   const dirPrefix = esc ? esc + '/' : '';
   // 「该目录直属的歌曲」= path 的最后一段不带斜杠（用 length 一次性算好，别在 SQL 里做字符串运算）
@@ -276,7 +317,7 @@ router.get('/mc/cover/:id', (req, res) => {
   if (!t) return res.status(404).end();
   res.setHeader('Cache-Control', 'private, max-age=86400');
   const emb = path.join(svc.COVER_DIR, t.id + '.jpg');
-  if (t.has_cover === 1 && fs.existsSync(emb)) {
+  if ((t.has_cover === 1 || t.has_cover === 3) && fs.existsSync(emb)) { // 3=刮削封面（v1.17.0），同存 covers/<id>.jpg
     const head = Buffer.alloc(2);
     let fd; try { fd = fs.openSync(emb, 'r'); fs.readSync(fd, head, 0, 2, 0); fs.closeSync(fd); } catch { /* 按默认 jpeg */ }
     res.setHeader('Content-Type', (head[0] === 0x89 && head[1] === 0x50) ? 'image/png' : 'image/jpeg');
@@ -315,6 +356,72 @@ router.get('/mc/lyrics/:id', async (req, res) => {
   if (!t) return res.status(404).json({ error: '歌曲不存在' });
   try { res.json(await svc.fetchLyrics(t)); }
   catch (e) { res.status(502).json({ ok: false, error: '歌词服务连不上：' + (e.name === 'TimeoutError' ? 'LRCLIB 超时（10 秒）' : e.message) }); }
+});
+
+// ---------- 封面刮削（v1.17.0）：渠道连通测试 + 后台任务 ----------
+// 测试（真搜一首「周杰伦 晴天」+ 真下图，不落盘）/ 开始（进程内后台跑，Cloudflare ~100s 墙内绝不同步等）
+router.post('/mc/scrape/test', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可测试' });
+  res.json(await svc.testScrapeChannel(String((req.body || {}).channel || '')));
+});
+router.post('/mc/scrape/start', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可刮削' });
+  const r = svc.startScrape();
+  res.status(r.ok ? 200 : 400).json(r);
+});
+router.post('/mc/scrape/stop', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可停止' });
+  const r = svc.stopScrape();
+  res.status(r.ok ? 200 : 400).json(r);
+});
+router.get('/mc/scrape/status', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可查看' });
+  res.json(svc.scrapeStatus());
+});
+
+// ---------- 悬浮歌词（v1.17.0）：正在播放上报（任意登录用户；浏览器 musicState 节流 beacon） ----------
+router.post('/mc/nowplaying', (req, res) => {
+  const r = agent.setNowPlaying(req.user && req.user.username, req.body);
+  if (!r.ok) return res.status(400).json({ error: '参数不对（id 为正整数）' });
+  res.json({ ok: true });
+});
+
+// agent 轮询（index.js EXEMPT 免登录，key 即凭证）：注册/心跳/配置/正在播放全在这一条 GET 里
+router.get('/mc/agent/poll', (req, res) => {
+  if (!agent.checkAgentKey(String(req.query.key || ''))) return res.status(403).json({ error: 'key 无效' });
+  const id = String(req.query.id || '');
+  if (!agent.DEVICE_ID_RE.test(id)) return res.status(400).json({ error: '设备号不合法' });
+  const row = agent.ensureAgent(id, req.query.computer, req.query.v, req.ip);
+  res.json(agent.pollPayload(row));
+});
+
+// 已安装设备（管理员）：列表 / 改名与单设备显示开关 / 删除 / 轮换 key / 下载安装包
+router.get('/mc/agents', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可查看' });
+  res.json({ agents: agent.listAgents() });
+});
+router.put('/mc/agents/:id', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可修改' });
+  const r = agent.updateAgent(req.params.id, req.body || {});
+  if (!r.ok) return res.status(404).json({ error: r.error });
+  res.json({ ok: true, agents: agent.listAgents() });
+});
+router.delete('/mc/agents/:id', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可删除' });
+  const r = agent.deleteAgent(req.params.id);
+  if (!r.ok) return res.status(404).json({ error: '设备不存在' });
+  res.json({ ok: true, agents: agent.listAgents() });
+});
+router.post('/mc/agent/rotate-key', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可轮换' });
+  res.json({ ok: true, key: agent.rotateAgentKey() });
+});
+router.get('/mc/agent/package', (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: '仅管理员可下载' });
+  const zip = agent.buildPackage(baseUrl(req), agent.getAgentKey());
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent('悬浮歌词安装包.zip'));
+  res.send(zip);
 });
 
 module.exports = router;

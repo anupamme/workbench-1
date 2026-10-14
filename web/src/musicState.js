@@ -22,6 +22,7 @@ export const musicState = reactive({
   lyricsOpen: false,  // 播放条上的歌词弹框
   lyrics: null,       // { ok, synced, text, error, loading } 当前曲歌词
   favIds: [],         // 已收藏的曲目 id（面板加载时全量拉一次 + toggle 即时改）
+  favTracks: [],      // 收藏完整行（v1.17.0 起共享：底部条/音乐页各持一份时，一边收藏另一边计数不动）
   sleepAt: 0,         // 延时停止的时间戳（ms）；0 = 未设
   sleepTip: '',       // 剩余提示
   cfg: null,          // 最近一次 GET /mc/config（海报封面优先级、全屏背景、歌词 API 来源…）
@@ -35,13 +36,32 @@ function el() {
   audioEl.preload = 'auto';
   audioEl.volume = musicState.volume;
   audioEl.playbackRate = musicState.rate;
-  audioEl.addEventListener('timeupdate', () => { musicState.pos = audioEl.currentTime; checkSleep(); });
+  audioEl.addEventListener('timeupdate', () => { musicState.pos = audioEl.currentTime; checkSleep(); maybeReport(false); });
   audioEl.addEventListener('loadedmetadata', () => { musicState.dur = Number.isFinite(audioEl.duration) ? audioEl.duration : 0; });
-  audioEl.addEventListener('play', () => { musicState.playing = true; });
-  audioEl.addEventListener('pause', () => { musicState.playing = false; });
+  audioEl.addEventListener('play', () => { musicState.playing = true; maybeReport(true); });
+  audioEl.addEventListener('pause', () => { musicState.playing = false; maybeReport(true); });
   audioEl.addEventListener('ended', () => onEnded());
   audioEl.addEventListener('error', () => { musicState.playing = false; });
   return audioEl;
+}
+
+// ---------- 悬浮歌词「正在播放」上报（v1.17.0）----------
+// 桌面歌词代理只轮询服务端（2s 一次）拿「正在播放」，那份状态由浏览器在这里节流喂新鲜——
+// 服务端 15s 没收到续报即视为停（代理浮窗自动隐藏）。timeupdate 里 ~1.9s 报一次（略短于代理
+// 轮询周期），播放/暂停/换曲（play 事件）立即报。用 fetch+keepalive 而不是 sendBeacon：
+// sendBeacon 固定 text/plain，express.json 不解析；令牌走 rawUrl 的 ?token= 查询参数。
+let npLast = 0;
+function maybeReport(force) {
+  const now = Date.now();
+  if (!force && now - npLast < 1900) return;
+  npLast = now;
+  const t = musicState.index >= 0 ? musicState.queue[musicState.index] : null;
+  if (!t) return;
+  fetch(rawUrl('/api/mc/nowplaying'), {
+    method: 'POST', keepalive: true,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: t.id, pos: musicState.pos, playing: musicState.playing }),
+  }).catch(() => { /* 上报失败不影响播放 */ });
 }
 
 export const current = computed(() => (musicState.index >= 0 ? musicState.queue[musicState.index] : null));
@@ -164,10 +184,13 @@ export function parseLrc(text) {
 }
 
 // ---------- 收藏 ----------
+// 一次拉取同时喂 favIds（心形状态）与 favTracks（完整行/计数）——任何一边收藏/取消，
+// 调 loadFavs() 刷新这一份共享数据，底部条与音乐页的计数、列表同时更新。
 export async function loadFavs() {
   try {
     const r = await api.get('/mc/favorites');
     musicState.favIds = (r.tracks || []).map((t) => t.id);
+    musicState.favTracks = r.tracks || [];
   } catch { /* 无权限/未配置时静默 */ }
 }
 export async function toggleFav(track) {
