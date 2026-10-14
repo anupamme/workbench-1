@@ -1373,6 +1373,18 @@ CREATE TABLE IF NOT EXISTS mc_lyrics_agents (
   first_seen INTEGER DEFAULT 0, last_seen INTEGER DEFAULT 0, polls INTEGER DEFAULT 0,
   show INTEGER DEFAULT 1, cfg_json TEXT DEFAULT '{}'
 );
+-- 集中化启动端 · 统一 Windows 助手登记（v1.18.0，主库——家庭共享）：桌面助手每次心跳自动 upsert；
+-- 凭证 = settings.launcher_key（32hex，key 即凭证）+ 安装包内嵌的安装人 uid（消息等按用户取数的归属，
+-- 心跳另带该用户的 notify_key 校验，改 uid 冒名读不了别人的消息）。
+-- services_json = 管理员按设备下发的服务开关 {notify,monitor,clip,pet,lyrics,compute}；
+-- report_json   = 助手最近一次上报的各服务真实状态（on/off/版本/compute 模型就位信息），
+--                  设置页「哪些电脑在线、哪些功能连接成功在用」就靠它渲染。
+CREATE TABLE IF NOT EXISTS launcher_agents (
+  id TEXT PRIMARY KEY, name TEXT DEFAULT '', computer TEXT DEFAULT '',
+  uid INTEGER DEFAULT 0, agent_version TEXT DEFAULT '', ip TEXT DEFAULT '',
+  first_seen INTEGER DEFAULT 0, last_seen INTEGER DEFAULT 0, polls INTEGER DEFAULT 0,
+  services_json TEXT DEFAULT '{}', report_json TEXT DEFAULT '{}'
+);
 -- 家庭与子女（按 family 共享开关路由：开=读主库全员共用，关=读各租户库独立）
 -- 结构与租户库同名表一致（routedDb 选库，两边共用同一份 DDL 定义见上方业务表）
 CREATE TABLE IF NOT EXISTS family_items (

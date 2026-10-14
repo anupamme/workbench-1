@@ -9,6 +9,7 @@
       <button v-if="isAdmin" :class="{ active: tab === 'ssl' }" @click="tab = 'ssl'">SSL 自签名</button>
       <button v-if="isAdmin" :class="{ active: tab === 'upgrade' }" @click="tab = 'upgrade'">升级管理</button>
       <button v-if="isAdmin" :class="{ active: tab === 'fnos' }" @click="tab = 'fnos'">飞牛应用</button>
+      <button v-if="isAdmin" :class="{ active: tab === 'launcher' }" @click="tab = 'launcher'">启动端</button>
       <button v-if="isAdmin" :class="{ active: tab === 'logs' }" @click="tab = 'logs'">登录日志</button>
       <button v-if="isAdmin" :class="{ active: tab === 'clienterr' }" @click="tab = 'clienterr'; loadClientErrors()">前端错误</button>
       <!-- 用户管理（原独立页并入，2026-09 v1.7.0）：仅管理员 -->
@@ -451,6 +452,7 @@
     <Upgrade v-if="isAdmin && tab === 'upgrade'" />
     <!-- 飞牛应用 fpk 下载 + 安装说明 tab（仅管理员；v1.9.9） -->
     <FnosPanel v-if="isAdmin && tab === 'fnos'" />
+    <LauncherPanel v-if="isAdmin && tab === 'launcher'" />
     <SslPanel v-if="isAdmin && tab === 'ssl'" />
     <!-- 登录日志 + IP 黑名单 tab（仅管理员；v1.3.4） -->
     <LoginLogsPanel v-if="isAdmin && tab === 'logs'" />
@@ -485,6 +487,7 @@ import { ref, computed, onMounted } from 'vue';
 import { api } from '../api';
 import Upgrade from './Upgrade.vue';
 import FnosPanel from '../components/FnosPanel.vue';
+import LauncherPanel from '../components/LauncherPanel.vue';
 import SslPanel from '../components/SslPanel.vue';
 import LoginLogsPanel from '../components/LoginLogsPanel.vue';
 import MultiPanel from './MultiPanel.vue';

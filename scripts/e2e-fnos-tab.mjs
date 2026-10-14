@@ -85,6 +85,10 @@ try {
   ck('C1 管理员可见「飞牛应用」tab', await tabBtn.count() === 1);
   await tabBtn.click();
   await p.waitForSelector('.fnos-panel');
+  // 卡一片的下载按钮/版本徽标/通道都在 v-if="info && info.available" 里（info 由
+  // /api/fnos/info 异步拉取，未返回前只有「正在读取安装包信息…」占位）——等徽标
+  // 出现再断言，消掉「面板挂载即数数」的竞态
+  await p.waitForSelector('.fnos-panel .card .badge.blue', { timeout: 10000 });
   const panel = p.locator('.fnos-panel');
   const cards = panel.locator('.card');
   ck('C2 下载按钮在面板第一张卡片', await cards.first().locator('button.primary', { hasText: '下载 fpk 安装包' }).count() === 1);

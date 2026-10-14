@@ -28,6 +28,7 @@ const xiaozhiRoutes = require('./routes/xiaozhiRoutes');
 const dhRoutes = require('./routes/dhRoutes');
 const haRoutes = require('./routes/haRoutes');
 const mcRoutes = require('./routes/mcRoutes'); // 音乐中心（v1.16.0）：/mc/*（曲库/扫描/流播/封面/收藏/歌词）
+const launcherRoutes = require('./routes/launcherRoutes'); // 集中启动端（v1.18.0）：/launcher/*（心跳 EXEMPT + 设备管理 + 安装包）
 const dhService = require('./services/dhService'); // 数字人参考图签名令牌校验（v1.12.1，鉴权中间件里用）
 const fnosRoutes = require('./routes/fnosRoutes');
 const authRoutes = require('./routes/authRoutes');
@@ -102,6 +103,7 @@ const EXEMPT = ['/auth/login', '/auth/fnos-login', '/health', '/tile', '/map-sta
   '/ha/hook', // Home Assistant webhook 反调（v1.14.0：HA 自动化 RESTful 动作，key 即凭证，路由内自校验）
   '/pets/desktop', // 桌面宠物（key 即凭证：state/frame/action）
   '/mc/agent/poll', // 悬浮歌词代理（v1.17.0：精确匹配这一条，key 即凭证——注册/心跳/配置/正在播放一条 GET；/mc/agent/package 下载必须留在登录闸内，别放前缀 '/mc/agent'）
+  '/launcher/agent/poll', // 集中启动端代理（v1.18.0：同上精确匹配这一条——在场/状态上报/取回未读消息一条 GET；/launcher/agent/package 下载留登录闸内）
   '/share', '/note-intake']; // 笔记分享（token+4位码即凭证）/ 外部写入令牌（v1.9.39）。⚠️ 路由内一律 403/404，绝不 401
 app.use('/api', (req, res, next) => {
   // 数字人参考图公网直取（v1.12.1）：Vivix 服务器建会话时要下载 source_images 的 URL，它没有
@@ -184,6 +186,7 @@ app.use('/api', dhRoutes); // 数字人（v1.12.0）：/dh/*（角色注册表/�
 app.use('/api', haRoutes); // Home Assistant（v1.14.0）：/ha/*（配置/实体/控制/摄像头/SSE/webhook 反调）
 app.use('/api', vstudyRoutes); // 视频中心（智能家居最后一个 tab）用的 /vc 接口
 app.use('/api', mcRoutes); // 音乐中心（v1.16.0）：智能家居「音乐」tab 的 /mc 接口
+app.use('/api', launcherRoutes); // 集中启动端（v1.18.0）：设置页「启动端」tab——agent 心跳（EXEMPT）+ 设备管理 + 安装包
 app.use('/api', flashToolRoutes); // 本地烧录工具包（v2.0.0 新增）
 app.use('/api', desensitizeRoutes); // AI 数据脱敏（v1.13.0）：效率工具页「AI脱敏」tab 的配置/试运行/历史
 app.use('/api', fnosRoutes);

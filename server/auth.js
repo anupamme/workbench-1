@@ -143,6 +143,7 @@ function pageForPath(p) {
   if (p.startsWith('/upgrade')) return 'upgrade';
   if (p.startsWith('/users')) return 'settings'; // 用户管理并入「设置」页 tab（v1.7.0，路由内部再限管理员）
   if (p.startsWith('/fnos')) return 'settings'; // 飞牛应用 fpk 下载归「设置」页飞牛应用 tab（v1.9.9）
+  if (p.startsWith('/launcher')) return 'settings'; // 集中启动端归「设置」页启动端 tab（v1.18.0；心跳在 EXEMPT 不走这里）
   if (p.startsWith('/settings') || p.startsWith('/roles')) return 'settings';
   return null;
 }
@@ -250,6 +251,9 @@ const TAB_PATHS = {
     ['users', ['/users']],
     // 飞牛应用 fpk 下载（v1.9.9）：设置页「飞牛应用」tab
     ['fnos', ['/fnos']],
+    // 集中启动端（v1.18.0）：设置页「启动端」tab——已上线电脑管理 + 安装包下载；
+    // 路由内设备增删/轮换/下载一律再限管理员，普通成员勾了也只读不到东西
+    ['launcher', ['/launcher']],
   ],
   // v1.10.10（需求⑨）：原来的 pets 页整块没了，端点全部并入下面的 tools 页（见 tools 里的 'pets' 一行）。
   // 智能家居（v1.6.8）：米家总览/控制整页共享；绑定与解绑归「设置」tab
