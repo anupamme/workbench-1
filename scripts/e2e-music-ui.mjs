@@ -465,9 +465,16 @@ try {
     'K5a 网易/QQ/酷狗/酷我四渠道各带地址输入框（iTunes 不出框）');
   ok((await p.locator('.zone .mc-set .sc-ch button', { hasText: '填入推荐' }).count()) === 0,
     'K5b 无「填入推荐」按钮（推荐地址仅供参考，只能自己粘贴）');
-  const recLines = await p.locator('.zone .mc-set .tip.sc-rec').allInnerTexts();
+  const recLines = await p.locator('.zone .mc-set .sc-ch .tip.sc-rec').allInnerTexts();
   ok(recLines.length === 4 && recLines.every((t) => t.includes('推荐地址') && t.includes('仅供参考，不内置')),
     'K5c 四渠道下方各显示推荐地址并注明「仅供参考，不内置；自行粘贴后方可使用」', JSON.stringify(recLines));
+  // v1.18.4 歌词 API 卡同款推荐行——但语义相反：LRCLIB 是内置默认，留空即可用。
+  // （标题写「歌词 API」带空格，按 'LRCLIB' 定位卡更稳——456 行同款坑）
+  const lyrCard = p.locator('.zone .mc-set .set-sec', { hasText: 'LRCLIB' });
+  const lyrCardText = (await lyrCard.innerText()).replace(/\s+/g, '');
+  ok(lyrCardText.includes('推荐地址：https://lrclib.net') && lyrCardText.includes('留空=用内置默认'),
+    'K5c-2 歌词 API 卡带推荐地址行（lrclib.net + 留空=用内置默认）', lyrCardText.slice(0, 120));
+  ok(/当前生效：https?:\/\/\S/.test(lyrCardText), 'K5c-3 歌词 API 卡显示当前生效地址（桩环境=MC_LRCLIB_BASE 桩地址）', lyrCardText.slice(0, 80));
   ok((await p.locator('.zone .mc-set button', { hasText: '保存勾选与地址' }).count()) === 1,
     'K5d 保存按钮合并勾选与地址');
   // v1.18.2 「粘贴→测连通」直通：未保存时按钮亮 ● / 行内亮「未保存」；点测连通自动先落库再测

@@ -238,7 +238,9 @@ function Log([string]$s) {
 try { New-Item -ItemType Directory -Force -Path $InstDir | Out-Null } catch { }
 
 # 单实例锁：已有常驻实例就安静退出（AbandonedMutex = 上个进程被强杀，锁已归我）
-$mtx = New-Object System.Threading.Mutex($false, 'Global\' + $AppName)
+# 注意拼接必须自带括号：New-Object 参数模式里逗号后的裸 + 会被拆成独立参数，撞上
+# Mutex(bool,string,out bool) 重载直接炸进程——v1.17.0 起悬浮歌词在任何真机上秒死的根因
+$mtx = New-Object System.Threading.Mutex($false, ('Global\' + $AppName))
 $got = $false
 try { $got = $mtx.WaitOne(0) } catch { $got = $true }
 if (-not $got) { exit 0 }

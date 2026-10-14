@@ -198,12 +198,13 @@
               <!-- ④ 歌词 API（原系统设置页的卡） -->
               <div class="card set-sec">
                 <h3><span class="material-icons ic-sm">lyrics</span> 歌词 API</h3>
-                <div class="tip">LRCLIB 兼容服务（{{ lyr.sourceText }}），已缓存 {{ lyr.cached }} 首；改地址后可清缓存重挑歌词</div>
+                <div class="tip">LRCLIB 兼容服务（当前生效：{{ lyr.effective || 'https://lrclib.net' }} · {{ lyr.sourceText }}），已缓存 {{ lyr.cached }} 首；改地址后可清缓存重挑歌词</div>
                 <div class="sc-row">
-                  <input v-model="lyr.api" class="grow" placeholder="https://lrclib.net" :disabled="setSaving" />
+                  <input v-model="lyr.api" class="grow" placeholder="https://lrclib.net" :disabled="setSaving" @keyup.enter="saveLyr" />
                   <button class="small" :disabled="setSaving" @click="saveLyr"><span class="material-icons ic-sm">save</span> 保存</button>
                   <button class="small" :disabled="lyrTesting" @click="testLyr">{{ lyrTesting ? '测试中…' : '测连通' }}</button>
                   <button class="small danger" :disabled="setSaving" @click="clearLyr">清空缓存</button>
+                  <div class="tip sc-rec">推荐地址：https://lrclib.net（免费无 Key，官方源；留空=用内置默认直接可用，要换自建反代/镜像时才粘贴到输入框）</div>
                 </div>
                 <div v-if="lyr.testMsg" class="tip" :class="{ ok: lyr.testOk, bad: !lyr.testOk }">{{ lyr.testMsg }}</div>
               </div>
@@ -410,7 +411,7 @@ function applyCfg(c) {
   const p = c.poster || {};
   poster.value = { names: p.cover_names || '', priority: p.cover_priority || 'embed', bg: p.full_bg || 'color' };
   const l = c.lyrics || {};
-  lyr.value = { ...lyr.value, api: l.api_source === 'setting' ? (l.api_custom || '') : '', sourceText: sourceLabel(l.api_source), cached: l.cached || 0 };
+  lyr.value = { ...lyr.value, api: l.api_source === 'setting' ? (l.api_custom || '') : '', effective: l.api || '', sourceText: sourceLabel(l.api_source), cached: l.cached || 0 };
   const sc = c.scrape || {};
   scrape.value = { ...scrape.value, ...sc };
   if (Array.isArray(sc.on)) scrapeOn.value = sc.on.slice();
@@ -422,7 +423,7 @@ function applyCfg(c) {
   desk.value = { on: d.on !== false, family: d.font_family || '', size: d.font_size || 36 };
 }
 function sourceLabel(s) {
-  return s === 'setting' ? '当前地址来自本设置页' : s === 'env' ? '当前地址来自环境变量 MC_LRCLIB_BASE' : '内置默认 lrclib.net（免费无 Key）';
+  return s === 'setting' ? '地址来自本设置页' : s === 'env' ? '地址来自环境变量 MC_LRCLIB_BASE' : '内置默认';
 }
 async function loadCfg() {
   try {
@@ -436,7 +437,7 @@ async function loadCfg() {
 const setRoot = ref('');
 const setSaving = ref(false);
 const poster = ref({ names: '', priority: 'embed', bg: 'color' });
-const lyr = ref({ api: '', sourceText: '', cached: 0, testMsg: '', testOk: false });
+const lyr = ref({ api: '', effective: '', sourceText: '', cached: 0, testMsg: '', testOk: false });
 const lyrTesting = ref(false);
 const scrapeOn = ref([]);            // 勾选的渠道 id（顺序 = 刮削优先级）
 const scrapeUrls = ref({});          // v1.17.1 渠道地址 { netease:'https://…', … }（v1.18.1 起空=该渠道不启用；itunes 无此项）
