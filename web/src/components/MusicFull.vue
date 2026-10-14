@@ -120,9 +120,11 @@ const bgStyle = computed(() => {
   // 设置页「音乐海报 → 全屏播放页背景」选了纯深色就一律深色，不取封面主色
   if (fullBgMode() === 'dark') return 'linear-gradient(160deg, #171a22 0%, #10131a 55%, #0b0d12 100%)';
   const c = domColor.value;
-  if (!c) return 'linear-gradient(160deg, #171a22 0%, #10131a 55%, #0b0d12 100%)';
-  // 主色做暗化渐变背景（文字可读优先，只取 26% / 10% 两档透明度叠加深底）
-  return `radial-gradient(120% 90% at 20% 12%, color-mix(in srgb, ${c} 30%, #10131a) 0%, #0d0f15 58%, #090b10 100%)`;
+  // 没取到主色（无封面/跨域）：给一档淡蓝渐变，别整屏死黑
+  if (!c) return 'radial-gradient(125% 95% at 20% 10%, #1c2a4d 0%, #131a2c 45%, #0b0e16 100%)';
+  // 主色渐变（v1.18.1 加浓）：峰值 62% → 中段 38% → 72% 处仍留 14% 余色，底部才归黑——
+  // 老版只有一个 30% 色档且 58% 就全黑，用户嫌「看不出颜色」
+  return `radial-gradient(125% 95% at 20% 10%, color-mix(in srgb, ${c} 62%, #10131a) 0%, color-mix(in srgb, ${c} 38%, #0d0f15) 42%, color-mix(in srgb, ${c} 14%, #090b10) 72%, #08090e 100%)`;
 });
 const sleepTitle = computed(() => (music.sleepAt > 0 ? '延时停止已设：' + fmtSleepLeft() : '延时停止'));
 
@@ -165,7 +167,13 @@ function extractColor(img) {
     if (!buckets.size) return;
     let best = null;
     for (const v of buckets.values()) if (!best || v.w > best.w) best = v;
-    domColor.value = `rgb(${Math.round(best.r / best.n)}, ${Math.round(best.g / best.n)}, ${Math.round(best.b / best.n)})`;
+    // v1.18.1：把主色往饱和方向推 25%（拉开通道差距再夹回 0-255）——洗白/灰调封面也能撑起明显渐变
+    let r = best.r / best.n, g = best.g / best.n, b = best.b / best.n;
+    const avg = (r + g + b) / 3;
+    r = Math.round(Math.max(0, Math.min(255, avg + (r - avg) * 1.25)));
+    g = Math.round(Math.max(0, Math.min(255, avg + (g - avg) * 1.25)));
+    b = Math.round(Math.max(0, Math.min(255, avg + (b - avg) * 1.25)));
+    domColor.value = `rgb(${r}, ${g}, ${b})`;
   } catch { /* 跨域/画布污染时保持默认渐变 */ }
 }
 

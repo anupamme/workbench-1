@@ -466,11 +466,11 @@ function stats() {
   return { total: r.total || 0, covers: r.covers || 0, nocover: r.nocover || 0, pending: r.pending || 0 };
 }
 
-// ---------- 封面刮削（v1.17.0；v1.17.1 加酷狗/酷我 + 每渠道地址可配）：公开渠道按勾选顺序补缺 ----------
-// 全部是无需 Key 的公开检索接口；地址优先级：设置页输入框(mc_scrape_urls) > env 覆盖 > 内置默认。
-// def=内置默认（就是设置页「推荐地址」那四条，粘贴即用——netease/kuwo 有内部归一，见 scrapeEndpoint）；
+// ---------- 封面刮削（v1.17.0；v1.17.1 加酷狗/酷我 + 每渠道地址可配；v1.18.1 推荐地址只做展示）----------
+// 地址来源只有两个：设置页输入框(mc_scrape_urls) > env 覆盖。def=「推荐地址」纯展示参考，
+// 不再内置回退（用户要求：只能自己粘贴到输入框后方可使用，是否使用由用户决定，避免版权纠纷）；
 // legacyPath=只填了光杆主机（无路径）时补的搜索路径——兼容旧 env base 语义与 e2e 假上游；
-// itunes 按用户要求保留现有模式（noUrl：不出输入框，仍走 env/内置）。
+// itunes 按用户要求保留现有模式（noUrl：不出输入框、无自定义地址，仍走 env/内置直连）。
 const SCRAPE_CHANNELS = [
   { id: 'netease', name: '网易云音乐', desc: '网易公开搜索，中文曲库覆盖最好',
     def: 'https://interface.music.163.com/eapi/api/cloudsearch/pc', legacyPath: '/api/search/get', env: 'MC_SCRAP_NETEASE' },
@@ -488,7 +488,9 @@ function scrapeUrlMap() {
   const m = getSetting(db, 'mc_scrape_urls', null);
   return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
 }
-// 最终生效的搜索端点（含路径）。两处「粘贴推荐地址」归一（2026-10-14 实测）：
+// 最终生效的搜索端点（含路径）；空 = 该渠道未启用（没填地址，刮削/测连通都会如实报错）。
+// v1.18.1 起 def 只是设置页展示的「推荐地址」，绝不做回退——除 itunes(noUrl) 外必须用户自己粘贴。
+// 两处「粘贴推荐地址」归一（2026-10-14 实测）：
 // ① netease 的 eapi 端点要加密 POST、GET 只回空体——同主机的 /api/ 路径 GET 直通（/eapi/api/cloudsearch/pc → /api/cloudsearch/pc）
 // ② kuwo.cn 站点根只回 SPA HTML——真实搜索接口在 search 子域（search.kuwo.cn/r.s）
 function scrapeEndpoint(id) {
@@ -496,7 +498,7 @@ function scrapeEndpoint(id) {
   if (!ch) return '';
   let raw = String(scrapeUrlMap()[id] || '').trim()
     || (ch.env ? String(process.env[ch.env] || '').trim() : '')
-    || ch.def;
+    || (ch.noUrl ? ch.def : '');
   raw = raw.replace(/\/+$/, '');
   if (id === 'netease' && raw.includes('/eapi/')) raw = raw.replace('/eapi/', '/');
   if (id === 'kuwo' && /^https?:\/\/(www\.)?kuwo\.cn$/i.test(raw)) raw = 'http://search.kuwo.cn';
@@ -525,9 +527,10 @@ async function fetchJson(url, ms = 8000) {
   return await res.json();
 }
 // 五渠道检索：回封面直链（拿不到回 null），实现各自独立 try——一家挂了别拖累下一家。
-// 端点一律走 scrapeEndpoint（设置页输入框 > env > 默认 + 归一），这里只管怎么调、怎么解析。
+// 端点一律走 scrapeEndpoint（设置页输入框 > env + 归一），这里只管怎么调、怎么解析。
 async function searchChannel(ch, query) {
   const ep = scrapeEndpoint(ch.id);
+  if (!ep) throw new Error('未配地址——推荐地址仅供参考，需自己粘贴到输入框并保存后才会启用');
   if (ch.id === 'netease') {
     const j = await fetchJson(`${ep}?s=${query}&type=1&limit=8`);
     const songs = (j.result && Array.isArray(j.result.songs)) ? j.result.songs : [];
@@ -623,8 +626,11 @@ function startScrape() {
   if (scrapeJob.running) return { ok: false, error: '刮削已在进行中' };
   const rows = db.prepare(`SELECT id, title, artist FROM mc_tracks WHERE has_cover=0 ORDER BY id`).all();
   if (!rows.length) return { ok: false, error: '没有待刮削的歌曲（全部已有封面）' };
-  const on = SCRAPE_CHANNELS.filter((c) => scrapeOnList().includes(c.id));
-  if (!on.length) return { ok: false, error: '所有渠道都被关掉了，先在设置里勾选至少一个' };
+  const checked = SCRAPE_CHANNELS.filter((c) => scrapeOnList().includes(c.id));
+  if (!checked.length) return { ok: false, error: '所有渠道都被关掉了，先在设置里勾选至少一个' };
+  // v1.18.1：没配地址的渠道不参与（勾了也不请求）——全都没地址就明说，别空跑一遍全失败
+  const on = checked.filter((c) => scrapeEndpoint(c.id));
+  if (!on.length) return { ok: false, error: '勾选的渠道都没配接口地址——推荐地址仅供参考，把地址粘贴到输入框保存后才会启用（iTunes 不用填）' };
   scrapeJob = { running: true, total: rows.length, done: 0, found: 0, failed: 0, current: '', log: [], started_at: Date.now(), finished_at: 0, error: '' };
   scrapeAbort = false;
   (async () => {
@@ -651,7 +657,7 @@ function startScrape() {
             pushLog(`· ${scrapeJob.current} ${ch.name} 未命中（${e.name === 'TimeoutError' ? '超时' : e.message}）`);
           }
         }
-        if (!got) { scrapeJob.failed++; if (scrapeJob.done % 20 === 0) pushLog(`✗ ${scrapeJob.current} 三个渠道都没刮到`); }
+        if (!got) { scrapeJob.failed++; if (scrapeJob.done % 20 === 0) pushLog(`✗ ${scrapeJob.current} 勾选的渠道都没刮到`); }
         scrapeJob.done++;
         await sleep(300);
       }

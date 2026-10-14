@@ -154,11 +154,9 @@ try {
   await p.waitForSelector('.mc-body', { timeout: 20000 });
   await sleep(600);
   const stats = await p.locator('.mc-stat').allInnerTexts();
-  ok(stats.length === 4 && stats[0].includes('3') && stats[0].includes('歌曲数量')
-    && stats[1].includes('2') && stats[1].includes('已有封面')
-    && stats[2].includes('1') && stats[2].includes('未匹配封面')
-    && stats[3].includes('1') && stats[3].includes('待处理'),
-    'B1 四张统计卡：3/2/1/1（歌曲/已有封面/未匹配/待处理）', JSON.stringify(stats));
+  ok(stats.length === 2 && stats[0].includes('3') && stats[0].includes('歌曲数量')
+    && stats[1].includes('2') && stats[1].includes('已有封面'),
+    'B1 两张统计卡：3/2（歌曲/已有封面；v1.18.1 删掉口径重叠的「未匹配/待处理」两框）', JSON.stringify(stats));
   ok((await p.locator('.mc-left .tree .tree-root').innerText()).includes('全部音乐'), 'B2 目录树根节点「全部音乐」');
   let rows = await p.locator('.mc-left .tree .row .name').allInnerTexts();
   ok(rows.join('|') === '专辑A|专辑B', 'B3 树上两个专辑目录', rows.join('|'));
@@ -462,13 +460,14 @@ try {
   ok((await p.locator('.zone .mc-set .sc-ch', { hasText: '网易' }).count()) === 1
     && (await p.locator('.zone .mc-set .sc-ch .sc-chk input[type=checkbox]').count()) === 5,
     'K5 封面刮削五渠道各带勾选框与测连通按钮');
-  // v1.17.1 渠道地址输入框：四家出框（itunes 按要求保留现有模式不出框）+ 推荐地址引导
+  // v1.18.1 推荐地址只做展示：没有「填入推荐」按钮，只能自己粘贴；文案带「仅供参考，不内置」
   ok((await p.locator('.zone .mc-set .sc-ch .sc-url input').count()) === 4,
     'K5a 网易/QQ/酷狗/酷我四渠道各带地址输入框（iTunes 不出框）');
-  ok((await p.locator('.zone .mc-set .sc-ch button', { hasText: '填入推荐' }).count()) === 4,
-    'K5b 四渠道各带「填入推荐」按钮（引导粘贴推荐地址）');
-  ok((await p.locator('.zone .mc-set .tip.sc-rec', { hasText: '推荐地址' }).count()) === 4,
-    'K5c 四渠道下方各显示推荐地址与实际请求端点');
+  ok((await p.locator('.zone .mc-set .sc-ch button', { hasText: '填入推荐' }).count()) === 0,
+    'K5b 无「填入推荐」按钮（推荐地址仅供参考，只能自己粘贴）');
+  const recLines = await p.locator('.zone .mc-set .tip.sc-rec').allInnerTexts();
+  ok(recLines.length === 4 && recLines.every((t) => t.includes('推荐地址') && t.includes('仅供参考，不内置')),
+    'K5c 四渠道下方各显示推荐地址并注明「仅供参考，不内置；自行粘贴后方可使用」', JSON.stringify(recLines));
   ok((await p.locator('.zone .mc-set button', { hasText: '保存勾选与地址' }).count()) === 1,
     'K5d 保存按钮合并勾选与地址');
   ok((await p.locator('.zone .mc-set button', { hasText: '下载 Windows 安装包' }).count()) === 1

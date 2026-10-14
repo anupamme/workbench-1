@@ -18,7 +18,9 @@
     <div v-else class="mc-body">
       <div class="mc-head">
         <span class="cur"><span class="material-icons">music_note</span> 音乐</span>
-        <!-- 视图切换（v1.16.1 建 / v1.17.0 改）：音乐库 / 收藏（原「我的收藏」按要求改名）+ 管理员「设置」（右栏整框切成音乐设置） -->
+        <span class="muted" style="font-size:12px">共 {{ stats.total }} 首 · 点击歌曲即播</span>
+        <span class="grow"></span>
+        <!-- 视图切换（v1.18.1 按要求挪到右侧「重新扫描」旁）：音乐库 / 收藏 + 管理员「设置」（右栏整框切成音乐设置） -->
         <button class="small vtab" :class="{ pri: view === 'lib' }" @click="view = 'lib'">音乐库</button>
         <button class="small vtab" :class="{ pri: view === 'fav' }" @click="openFavView">
           <span class="material-icons ic-sm">favorite</span> 收藏（{{ favTracks.length }}）
@@ -26,20 +28,16 @@
         <button v-if="isAdmin" class="small vtab" :class="{ pri: view === 'settings' }" @click="openSettings">
           <span class="material-icons ic-sm">settings</span> 设置
         </button>
-        <span class="muted" style="font-size:12px">共 {{ stats.total }} 首 · 点击歌曲即播</span>
-        <span class="grow"></span>
         <button v-if="isAdmin" class="small" :disabled="scanning" @click="rescan">
           <span class="material-icons ic-sm">refresh</span> {{ scanning ? '扫描中…' : '重新扫描' }}
         </button>
       </div>
       <div class="mc-main">
-        <!-- 左栏：四张统计卡 + 目录树（照视频中心的展开结构） -->
+        <!-- 左栏：两张统计卡 + 目录树（v1.18.1 按要求删掉「未匹配封面/待处理」两框——两者口径重叠易误读） -->
         <div class="mc-left">
           <div class="mc-stats">
             <div class="mc-stat"><b>{{ stats.total }}</b><span>歌曲数量</span></div>
             <div class="mc-stat"><b>{{ stats.covers }}</b><span>已有封面</span></div>
-            <div class="mc-stat warn"><b>{{ stats.nocover }}</b><span>未匹配封面</span></div>
-            <div class="mc-stat warn"><b>{{ stats.pending }}</b><span>待处理</span></div>
           </div>
           <!-- 浏览方式切换（v1.16.7）：目录（默认，照视频中心）/ 歌手（左歌手 · 右专辑） -->
           <div class="mc-modes">
@@ -143,7 +141,7 @@
               <!-- ② 封面刮削：渠道勾选（勾选顺序=优先级）+ 每渠道地址输入框（v1.17.1，itunes 保留现有模式不出框）+ 测连通 + 后台任务 -->
               <div class="card set-sec">
                 <h3><span class="material-icons ic-sm">image_search</span> 封面刮削</h3>
-                <div class="tip">给没有封面的歌（统计卡「未匹配封面」那些）从公开渠道补封面；勾选顺序就是优先级，第一家没刮到才试下一家。地址留空用内置默认，填了推荐地址就以填的为准（保存后「实际请求」一栏会亮出真打的端点）</div>
+                <div class="tip">给没有封面的歌从公开渠道补封面；勾选顺序就是优先级，第一家没刮到才试下一家。推荐地址仅供参考（不内置），把地址自己粘贴到输入框并保存后该渠道才会启用；用不用、用哪家由你自己决定</div>
                 <div v-for="ch in scrape.channels" :key="ch.id" class="sc-ch">
                   <label class="sc-chk" :title="'拖动排序=优先级（越靠上越先用）'">
                     <input v-model="scrapeOn" type="checkbox" :value="ch.id" />
@@ -155,10 +153,9 @@
                   </button>
                   <template v-if="!ch.no_url">
                     <div class="sc-row sc-url">
-                      <input v-model="scrapeUrls[ch.id]" class="grow" :disabled="setSaving" :placeholder="'默认：' + ch.rec" @keyup.enter="saveScrape" />
-                      <button class="small" :disabled="setSaving" title="把下面的推荐地址填进输入框" @click="scrapeUrls[ch.id] = ch.rec">填入推荐</button>
+                      <input v-model="scrapeUrls[ch.id]" class="grow" :disabled="setSaving" placeholder="粘贴该渠道的搜索接口地址后才会启用（推荐地址见下）" @keyup.enter="saveScrape" />
                     </div>
-                    <div class="tip sc-rec">推荐地址：{{ ch.rec }}（不想手抄就点「填入推荐」）· 实际请求：{{ ch.effective }}</div>
+                    <div class="tip sc-rec">推荐地址：{{ ch.rec }}（仅供参考，不内置；自行粘贴到输入框后方可使用）<template v-if="ch.effective"> · 已生效：{{ ch.effective }}</template></div>
                   </template>
                 </div>
                 <div class="sc-row">
@@ -761,7 +758,6 @@ async function rescan() {
 .mc-stat { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
 .mc-stat b { font-size: 20px; }
 .mc-stat span { font-size: 11.5px; color: var(--muted); }
-.mc-stat.warn b { color: #e0a23c; }
 /* 目录树（照视频中心样式） */
 .tree { padding: 10px; overflow: auto; }
 .tree-root { font-size: 13.5px; font-weight: 600; padding: 5px 6px; border-radius: 6px; cursor: pointer; }

@@ -176,7 +176,7 @@ try {
   const itCh = (cfg0.j.scrape.channels || []).find((c) => c.id === 'itunes') || {};
   const woCh = (cfg0.j.scrape.channels || []).find((c) => c.id === 'kuwo') || {};
   ok(itCh.no_url === true && itCh.url === '' && itCh.rec === '', 'A4a iTunes 按要求保留现有模式（no_url：不出输入框不给推荐）', JSON.stringify(itCh));
-  ok(woCh.rec === 'https://kuwo.cn' && (woCh.effective || '').includes('/r.s'), 'A4b 酷我推荐地址=站点根，归一后指向 search.kuwo.cn/r.s', JSON.stringify(woCh));
+  ok(woCh.rec === 'https://kuwo.cn' && woCh.effective === '', 'A4b 酷我推荐地址=站点根，但 v1.18.1 起推荐不内置——没粘贴地址时 effective 为空', JSON.stringify(woCh));
 
   // ---------- B. 渠道勾选持久化：顺序保留 / 显式全关是真关 / 全关时 start 如实拒绝 ----------
   const s1 = await api('POST', '/api/mc/settings', { token: T, body: { scrape_on: ['qq', 'netease'] } });
@@ -186,6 +186,15 @@ try {
   ok(Array.isArray(cfg1.j.scrape.on) && cfg1.j.scrape.on.length === 0, 'B2 显式存 [] = 全关（不回退成全开）', JSON.stringify(cfg1.j.scrape.on));
   const st0 = await api('POST', '/api/mc/scrape/start', { token: T, body: {} });
   ok(st0.status === 400 && (st0.j.error || '').includes('所有渠道都被关掉了'), 'B3 全关时 start 刮削 400 并如实说明', JSON.stringify(st0.j));
+  // v1.18.1 推荐地址不内置：勾了但没配地址的渠道不参与——全没地址时 start 明说、测连通报「未配地址」
+  // （kuwo 在本 e2e 里故意不设 env，正好当「未配地址」的样本）
+  await api('POST', '/api/mc/settings', { token: T, body: { scrape_on: ['kuwo'] } });
+  const stNoEp = await api('POST', '/api/mc/scrape/start', { token: T, body: {} });
+  ok(stNoEp.status === 400 && (stNoEp.j.error || '').includes('没配接口地址'),
+    'B3a 勾选渠道都没配地址时 start 400 并说明「粘贴后才会启用」', JSON.stringify(stNoEp.j));
+  const tNoEp = await api('POST', '/api/mc/scrape/test', { token: T, body: { channel: 'kuwo' } });
+  ok(tNoEp.j.ok === false && (tNoEp.j.error || '').includes('未配地址'),
+    'B3b 未配地址的渠道测连通回 ok:false「未配地址」', JSON.stringify(tNoEp.j));
   await api('POST', '/api/mc/settings', { token: T, body: { scrape_on: ['netease', 'qq', 'itunes'] } });
 
   // ---------- v1.17.1 渠道地址表：保存往返 / 两处「粘贴推荐地址」归一 / 先验后写 ----------
