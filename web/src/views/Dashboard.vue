@@ -162,6 +162,13 @@
           <h3 class="dash-title">中国节日日历</h3>
           <HolidayCalendar />
         </div>
+
+        <!-- 音乐播放器：与音乐页/底部悬浮播放条同一个播放器（同一首歌、同一进度） -->
+        <div v-else-if="key === 'music'" :class="['card dash-card', { dragging: dragKey === key, 'drag-over': dragOverKey === key }]"
+             draggable="true" @dragstart="onDragStart(key, $event)" @dragover.prevent="onDragOver(key)" @drop.prevent="onDrop(key)">
+          <h3 class="dash-title">音乐播放器 <router-link to="/smart-home?tab=music" class="link small">音乐页</router-link></h3>
+          <MusicCard />
+        </div>
       </template>
 
       <!-- 看板模块显隐（个人设置，只影响自己；固定在瀑布流最下方，不参与拖拽） -->
@@ -191,6 +198,8 @@ const router = useRouter();
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 const HolidayCalendar = defineAsyncComponent(() => import('./HolidayCalendar.vue'));
+// 音乐播放器卡片（v1.18.6）：与音乐页/底部悬浮条共用同一个播放器（musicState 单例），异步加载
+const MusicCard = defineAsyncComponent(() => import('../components/MusicCard.vue'));
 
 const err = ref('');
 const weather = ref({});
@@ -215,7 +224,7 @@ const hotNews = ref([]);
 const hotErr = ref('');
 
 // ---------- 看板布局（拖拽排序 + 持久化 + 个人显隐） ----------
-const DEFAULT_LAYOUT = ['clock', 'weather', 'commute', 'links', 'todos', 'events', 'news', 'hot', 'kids', 'holiday'];
+const DEFAULT_LAYOUT = ['clock', 'weather', 'commute', 'links', 'todos', 'events', 'news', 'hot', 'kids', 'holiday', 'music'];
 const layout = ref([...DEFAULT_LAYOUT]);   // 实际渲染顺序（后端已过滤全局禁用+本人隐藏）
 const allKeys = ref([...DEFAULT_LAYOUT]);  // 完整顺序（含隐藏模块：拖拽保存时合并，恢复不丢位置）
 const hidden = ref([]);                    // 本人隐藏的模块

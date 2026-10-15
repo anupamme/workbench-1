@@ -2042,7 +2042,7 @@ router.post('/todos/default', (req, res) => {
 });
 
 // ---------- 看板布局（模块顺序持久化，归租户：每人首页自己排） ----------
-const DASHBOARD_DEFAULT_LAYOUT = ['clock', 'weather', 'commute', 'links', 'todos', 'events', 'news', 'hot', 'kids', 'holiday'];
+const DASHBOARD_DEFAULT_LAYOUT = ['clock', 'weather', 'commute', 'links', 'todos', 'events', 'news', 'hot', 'kids', 'holiday', 'music'];
 // 看板模块注册表（全局增减/个人显隐的配置界面用；key 与前端卡片 v-if 分支一一对应）
 const DASHBOARD_CARDS = [
   { key: 'clock', label: '电子时钟' },
@@ -2055,6 +2055,7 @@ const DASHBOARD_CARDS = [
   { key: 'hot', label: '百度热搜' },
   { key: 'kids', label: '子女学习' },
   { key: 'holiday', label: '节日日历' },
+  { key: 'music', label: '音乐播放器' },
 ];
 const DASHBOARD_KEYS = DASHBOARD_CARDS.map((c) => c.key);
 

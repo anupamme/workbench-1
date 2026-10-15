@@ -229,6 +229,17 @@ router.get('/mc/library', (req, res) => {
   const rel = String(req.query.dir || '').replace(/\\/g, '/').replace(/^\/+/, '');
   const root = svc.resolveRoot(svc.mcRootSetting()).root;
   if (!root) return res.status(400).json({ error: '尚未配置音乐目录，请先点音乐页右上角「设置」填写音乐路径' });
+  // v1.18.6：?all=1 = 整个曲库一次给全（首页看板音乐卡片的「全部曲库」播放列表用）。
+  // 几千首时这条回 ~150KB——前端只在用户真切到「全部曲库」时懒拉一次，不进启动路径。
+  if (req.query.all === '1') {
+    const all = db.prepare(`SELECT t.id, t.path, t.title, t.artist, t.album, t.duration_ms, t.has_cover,
+        (SELECT COUNT(*) FROM mc_favorites f WHERE f.track_id=t.id) AS fav_count
+      FROM mc_tracks t ORDER BY t.path COLLATE NOCASE`).all().map((r) => ({
+      ...r,
+      fav: !!db.prepare('SELECT 1 FROM mc_favorites WHERE user_id=? AND track_id=?').get(req.user.id, r.id),
+    }));
+    return res.json({ dir: '', tracks: all, subdirs: [] });
+  }
   const esc = rel.replace(/\\/g, '/');
   const dirPrefix = esc ? esc + '/' : '';
   // 「该目录直属的歌曲」= path 的最后一段不带斜杠（用 length 一次性算好，别在 SQL 里做字符串运算）
