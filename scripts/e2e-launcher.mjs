@@ -184,6 +184,13 @@ try {
     && psText.includes('petDirty') && psText.includes('lyricsDirty'),
     'C18 四客户端偏好全落 state.json（设置一次下次开机保持）');
 
+  // ---------- v1.18.5 永久退出握手（客户端右键永久退出 ↔ 托盘勾选重开） ----------
+  ok((psText.match(/disabled\.flag/g) || []).length >= 2 && psText.includes('客户端请求永久停用'),
+    'C19 tick 尊重 disabled.flag：翻托盘勾选为未勾并落盘（防看护把永久退出拉回来）',
+    String((psText.match(/disabled\.flag/g) || []).length));
+  ok(psText.includes('Remove-Item -LiteralPath (Join-Path (Join-Path $env:LOCALAPPDATA $a.app) \'disabled.flag\')'),
+    'C20 Start-Agent 摘停用标记（托盘重新勾选 = 明确要开）');
+
   // ---------- poll 全回合 ----------
   const DEVID = 'PCe2e00000001';
   ok((await pollQ('id=' + DEVID)).status === 403, 'D1 无 key 403');

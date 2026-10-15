@@ -506,6 +506,27 @@ try {
   ok((await p.locator('.zone .mc-set button', { hasText: '下载 Windows 安装包' }).count()) === 1
     && (await p.locator('.zone .mc-set button', { hasText: '轮换设备密钥' }).count()) === 1,
     'K6 悬浮歌词段带安装包下载与密钥轮换');
+  {
+    const deskSec = p.locator('.zone .mc-set .set-sec', { hasText: '悬浮歌词' });
+    const slider = deskSec.locator('input[type=range]');
+    ok((await slider.count()) === 1, 'K6a 文字透明度滑杆渲染（v1.18.5）');
+    if ((await slider.count()) === 1) {
+      const min = await slider.getAttribute('min');
+      const max = await slider.getAttribute('max');
+      ok(min === '15' && max === '100', 'K6b 滑杆量程 15~100', `${min}~${max}`);
+      await slider.fill('60');
+      await slider.dispatchEvent('change');
+      await p.waitForTimeout(600);
+      const cfgO = await api('GET', '/api/mc/config', { token: T });
+      ok(Math.abs(((cfgO.j.desk || {}).font_opacity || 0) - 0.6) < 0.001,
+        'K6c 松开滑杆自动保存（/mc/config 回 0.6）', JSON.stringify((cfgO.j.desk || {}).font_opacity));
+      const pctTxt = (await deskSec.locator('.tip', { hasText: '%' }).first().innerText());
+      ok(pctTxt.includes('60%'), 'K6d 百分比回显 60%', pctTxt.trim());
+    }
+    const secTxt = (await deskSec.innerText()).replace(/\s+/g, '');
+    ok(secTxt.includes('渐变变红') && secTxt.includes('扩展屏') && secTxt.includes('本次退出') && secTxt.includes('永久退出'),
+      'K6e 卡内说明含渐变/多屏/两种退出文案');
+  }
   ok((await p.locator('.zone .mc-set .tip', { hasText: '还没有电脑安装' }).count()) === 1,
     'K7 无设备时如实显示「还没有电脑安装」');
   await p.locator('.zone-head button', { hasText: '返回音乐库' }).click();

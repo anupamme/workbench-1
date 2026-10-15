@@ -86,6 +86,16 @@ function setFontSize(v) {
   if (!Number.isFinite(n)) return;
   setSetting(db, 'mc_font_size', String(Math.min(96, Math.max(12, n))));
 }
+// v1.18.5 文字透明度（0.15~1；作用于整个浮窗=文字+阴影，背景本来透明不受影响）
+function fontOpacitySetting() {
+  const n = parseFloat(getSetting(db, 'mc_font_opacity', '1'));
+  return Number.isFinite(n) ? Math.min(1, Math.max(0.15, Math.round(n * 100) / 100)) : 1;
+}
+function setFontOpacity(v) {
+  const n = parseFloat(v);
+  if (!Number.isFinite(n)) return;
+  setSetting(db, 'mc_font_opacity', String(Math.min(1, Math.max(0.15, Math.round(n * 100) / 100))));
+}
 // 空串 = 用安装包自带的思源黑体（agent 本地解析 file:///…font.otf#家族名）；其余 = 系统字体名
 const FONT_OPTIONS = [
   { v: '', n: '内置思源黑体（安装包自带）' },
@@ -171,7 +181,7 @@ function pollPayload(agent) {
     ok: true,
     device: { id: agent.id, name: agent.name || agent.computer || agent.id, show: !!agent.show },
     global_on: deskOn(),
-    font: { family: fontFamilySetting(), size: fontSizeSetting() },
+    font: { family: fontFamilySetting(), size: fontSizeSetting(), opacity: fontOpacitySetting() },
     now,
     server_time: Date.now(),
   };
@@ -201,6 +211,8 @@ $LogFile = Join-Path $InstDir 'agent.log'
 # ---------- 安装 ----------
 if ($Cmd -eq 'install') {
   New-Item -ItemType Directory -Force -Path $InstDir | Out-Null
+  # 重新安装 = 明确要装：摘掉「永久退出」停用标记（v1.18.5）
+  Remove-Item -LiteralPath (Join-Path $InstDir 'disabled.flag') -Force -ErrorAction SilentlyContinue
   Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $InstDir 'setup.ps1') -Force
   $fontSrc = Join-Path (Split-Path $PSCommandPath -Parent) 'font.otf'
   if (Test-Path -LiteralPath $fontSrc) { Copy-Item -LiteralPath $fontSrc -Destination (Join-Path $InstDir 'font.otf') -Force }
@@ -244,6 +256,12 @@ $mtx = New-Object System.Threading.Mutex($false, ('Global\' + $AppName))
 $got = $false
 try { $got = $mtx.WaitOne(0) } catch { $got = $true }
 if (-not $got) { exit 0 }
+
+# 「永久退出」停用标记（v1.18.5）：右键永久退出落下、托盘勾选重开时由启动端摘掉。
+# 标记在位 = 用户明确不要：开机自启/看护再拉起时安静离开（不写日志——老启动端每 45s
+# 重拉一次，逐次落日志会把 agent.log 刷成复读机）
+$FlagFile = Join-Path $InstDir 'disabled.flag'
+if (Test-Path -LiteralPath $FlagFile) { exit 0 }
 
 # TLS：工作台可能挂在自签 HTTPS 后面（信任证书），且不走系统代理（代理会吞 2s 轮询）
 try {
@@ -334,8 +352,28 @@ $win.ShowActivated = $false
 $win.ResizeMode = 'NoResize'
 $win.SizeToContent = 'WidthAndHeight'
 $win.MaxWidth = [math]::Floor($work.Width * 0.86)
+# 位置（v1.18.5 多屏）：优先恢复上次拖放记忆 pos.json（拖到扩展屏也回扩展屏）；
+# 没有/超出当前虚拟屏幕范围才回主屏底部居中。userMoved=用户钉过位置，tick 不再自动居中
+$script:posFile = Join-Path $InstDir 'pos.json'
+$script:userMoved = $false
 $win.Top = [math]::Floor($work.Bottom - 150)
 $win.Left = [math]::Floor($work.Left + ($work.Width - 500) / 2)
+try {
+  if (Test-Path -LiteralPath $script:posFile) {
+    $pp = Get-Content -LiteralPath $script:posFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($null -ne $pp.x -and $null -ne $pp.y) {
+      $vsL = [System.Windows.SystemParameters]::VirtualScreenLeft
+      $vsT = [System.Windows.SystemParameters]::VirtualScreenTop
+      $vsR = $vsL + [System.Windows.SystemParameters]::VirtualScreenWidth
+      $vsB = $vsT + [System.Windows.SystemParameters]::VirtualScreenHeight
+      if ([double]$pp.x -ge ($vsL - 200) -and [double]$pp.x -le ($vsR - 60) -and [double]$pp.y -ge ($vsT - 200) -and [double]$pp.y -le ($vsB - 20)) {
+        $win.Left = [double]$pp.x
+        $win.Top = [double]$pp.y
+        $script:userMoved = $true
+      }
+    }
+  }
+} catch { }
 
 $tb = New-Object System.Windows.Controls.TextBlock
 $tb.TextWrapping = 'Wrap'
@@ -347,25 +385,59 @@ $sh.Color = [System.Windows.Media.Color]::FromArgb(200, 90, 90, 90)
 $sh.BlurRadius = 6
 $sh.ShadowDepth = 2
 $tb.Effect = $sh
-$runRed = New-Object System.Windows.Documents.Run('')
-$runRed.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(255, 255, 64, 64))
-$runWhite = New-Object System.Windows.Documents.Run('')
-$runWhite.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Colors]::White)
-$tb.Inlines.Add($runRed)
-$tb.Inlines.Add($runWhite)
+# 渐变卡拉OK（v1.18.5）：一支水平线性渐变笔刷当蒙版，红白之间留一段过渡带，
+# 每 100ms 挪两个 GradientStop 的 Offset——变色从左往右柔和扫过去，
+# 替代旧版两段 Run 的硬切（红白之间一个字 instant 翻面，太生硬）
+$run = New-Object System.Windows.Documents.Run('')
+$brush = New-Object System.Windows.Media.LinearGradientBrush
+$brush.StartPoint = New-Object System.Windows.Point(0, 0.5)
+$brush.EndPoint = New-Object System.Windows.Point(1, 0.5)
+$redC = [System.Windows.Media.Color]::FromArgb(255, 255, 64, 64)
+$whtC = [System.Windows.Media.Colors]::White
+$gsA = New-Object System.Windows.Media.GradientStop($redC, 0.0)
+$gsB = New-Object System.Windows.Media.GradientStop($redC, 0.0)
+$gsC = New-Object System.Windows.Media.GradientStop($whtC, 0.0)
+$gsD = New-Object System.Windows.Media.GradientStop($whtC, 1.0)
+$null = $brush.GradientStops.Add($gsA)
+$null = $brush.GradientStops.Add($gsB)
+$null = $brush.GradientStops.Add($gsC)
+$null = $brush.GradientStops.Add($gsD)
+$tb.Foreground = $brush
+$tb.Inlines.Add($run)
 $win.Content = $tb
 
-# 右键退出 + 左键拖动
+# 右键菜单（v1.18.5 两项）：本次退出=只退进程（开机自启还在，下次开机自动回来）；
+# 永久退出=落 disabled.flag + 摘自己的开机自启（之后由启动端托盘勾选「悬浮歌词」重开）
 $menu = New-Object System.Windows.Controls.ContextMenu
-$miExit = New-Object System.Windows.Controls.MenuItem
-$miExit.Header = '退出悬浮歌词'
-$null = $miExit.Add_Click({ $st.stop = $true; $win.Close() })
-$null = $menu.Items.Add($miExit)
+$miOff = New-Object System.Windows.Controls.MenuItem
+$miOff.Header = '本次退出（下次开机自动回来）'
+$null = $miOff.Add_Click({ $st.stop = $true; $win.Close() })
+$miQuit = New-Object System.Windows.Controls.MenuItem
+$miQuit.Header = '永久退出（托盘勾选「悬浮歌词」可重开）'
+$null = $miQuit.Add_Click({
+  try { Set-Content -LiteralPath $script:FlagFile -Value 'off' -Encoding UTF8 } catch { }
+  try { Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $script:AppName -ErrorAction SilentlyContinue } catch { }
+  try { Log '永久退出：已落停用标记并摘除开机自启（启动端托盘勾选「悬浮歌词」可重开）' } catch { }
+  $st.stop = $true
+  $win.Close()
+})
+$null = $menu.Items.Add($miOff)
+$null = $menu.Items.Add($miQuit)
 $tb.ContextMenu = $menu
-$null = $win.Add_MouseLeftButtonDown({ try { $win.DragMove() } catch { } })
+
+# 左键拖动（v1.18.5）：拖完记 pos.json——重启/升级都回这个位置，tick 也不再自动居中
+$null = $win.Add_MouseLeftButtonDown({
+  try {
+    $win.DragMove()
+    $script:userMoved = $true
+    try {
+      $po = @{ x = [math]::Floor($win.Left); y = [math]::Floor($win.Top) }
+      Set-Content -LiteralPath $script:posFile -Value (ConvertTo-Json $po -Compress) -Encoding UTF8
+    } catch { }
+  } catch { }
+})
 
 $script:lastText = ''
-$script:lastRed = -1
 $script:lastFontSig = ''
 $script:fontFile = Join-Path $InstDir 'font.otf'
 $script:haveFont = Test-Path -LiteralPath $script:fontFile
@@ -379,18 +451,26 @@ function Update-Tick {
     if ($age -le 15 -and $n.playing -and $st.globalOn -and $st.devShow) { $visible = $true }
   }
   if (-not $visible) { if ($script:win.IsVisible) { $script:win.Hide() }; return }
-  # 字体/字号（设置页改了，下一次 poll 生效）
+  # 字体/字号/透明度（设置页改了，下一次 poll 生效）
   $fam = ''
   $size = 36
-  if ($null -ne $st.font) { $fam = [string]$st.font.family; $size = [int]$st.font.size }
+  $opa = 1.0
+  if ($null -ne $st.font) {
+    $fam = [string]$st.font.family
+    $size = [int]$st.font.size
+    if ($null -ne $st.font.opacity) { $opa = [double]$st.font.opacity }
+  }
+  if ($opa -lt 0.15) { $opa = 0.15 }
+  if ($opa -gt 1) { $opa = 1 }
   if (-not $fam) {
     if ($script:haveFont) { $fam = 'file:///' + ($script:fontFile -replace '\\','/') + '#' + $script:fontFam }
     else { $fam = '微软雅黑' }
   }
-  $sig = $fam + '|' + $size
+  $sig = $fam + '|' + $size + '|' + $opa
   if ($sig -ne $script:lastFontSig) {
     $script:tb.FontFamily = New-Object System.Windows.Media.FontFamily($fam)
     $script:tb.FontSize = $size
+    $script:win.Opacity = $opa
     $script:lastFontSig = $sig
   }
   # 播放位置插值：上次 poll 的 pos + 本地流逝
@@ -414,16 +494,17 @@ function Update-Tick {
   $frac = ($pos - $pickedT) / $span
   if ($frac -lt 0) { $frac = 0 }
   if ($frac -gt 1) { $frac = 1 }
-  $redN = [int][math]::Floor($frac * $text.Length)
-  if ($text -ne $script:lastText -or $redN -ne $script:lastRed) {
-    $script:runRed.Text = $text.Substring(0, $redN)
-    $script:runWhite.Text = $text.Substring($redN)
-    $script:lastText = $text
-    $script:lastRed = $redN
-  }
+  if ($text -ne $script:lastText) { $script:run.Text = $text; $script:lastText = $text }
+  # 渐变蒙版推进：过渡带占整行 8%，gsB=红侧边缘、gsC=白侧边缘，跟着演唱进度扫
+  $band = 0.08
+  $script:gsB.Offset = [math]::Max(0.0, ([double]$frac - $band))
+  $script:gsC.Offset = [math]::Min(1.0, [double]$frac)
   if (-not $script:win.IsVisible) { $script:win.Show() }
-  # 底部居中（内容换行变高变宽后重新居中）
-  $script:win.Left = [math]::Floor($script:work.Left + (($script:work.Width - $script:win.ActualWidth) / 2))
+  # 底部居中（内容换行变高变宽后重新居中）——只在用户没拖过时做；
+  # 拖过 = 用户钉了位置（可能在扩展屏），别把窗口拉回主屏
+  if (-not $script:userMoved) {
+    $script:win.Left = [math]::Floor($script:work.Left + (($script:work.Width - $script:win.ActualWidth) / 2))
+  }
 }
 
 $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -487,11 +568,15 @@ const README_TXT = '\uFEFF' + [
   '【装法】双击 安装.cmd。装到 %LOCALAPPDATA%\\WorkbenchLyrics，并设了开机自启。',
   '',
   '【用法】在工作台网页里播放音乐即可：桌面底部浮窗只显示正在播放的一句，',
-  '唱到的字变红，其余白色带灰阴影。播放暂停/停止、或网页关掉 15 秒后浮窗自动消失。',
-  '浮窗可以按住左键拖动，右键菜单可退出。',
+  '唱到的字从左向右渐变变红（蒙版式柔和过渡），其余白色带灰阴影。',
+  '播放暂停/停止、或网页关掉 15 秒后浮窗自动消失。',
+  '浮窗可以按住左键拖到任意屏幕（包括扩展屏），松手即记住位置，重启后回到原地。',
+  '右键菜单两项：「本次退出」（只退这一次，下次开机自动回来）与',
+  '「永久退出」（停用 + 摘开机自启；之后在启动端托盘勾选「悬浮歌词」可重新打开，',
+  '没装启动端的电脑重新运行一次安装.cmd 也可以）。',
   '',
   '【控制】工作台「人工智能 → 音乐 → 设置 → 悬浮歌词」里：总开关（关掉全部设备不显示）、',
-  '每台设备的单独开关、字体与字号。改完约 2 秒生效（代理两秒一次心跳）。',
+  '每台设备的单独开关、字体字号与文字透明度。改完约 2 秒生效（代理两秒一次心跳）。',
   '',
   '【卸载】双击 卸载.cmd（移除开机自启并删除程序目录）。',
   '',
@@ -527,7 +612,7 @@ module.exports = {
   DEVICE_ID_RE,
   getAgentKey, rotateAgentKey, checkAgentKey,
   ensureAgent, listAgents, updateAgent, deleteAgent,
-  deskOn, setDeskOn, fontFamilySetting, setFontFamily, fontSizeSetting, setFontSize, FONT_OPTIONS,
+  deskOn, setDeskOn, fontFamilySetting, setFontFamily, fontSizeSetting, setFontSize, fontOpacitySetting, setFontOpacity, FONT_OPTIONS,
   setNowPlaying, getNowPlaying, parseLrc, linesForAgent, pollPayload,
   PS_TEMPLATE, bundledFont, buildPackage,
 };

@@ -212,7 +212,7 @@
               <!-- ⑤ 悬浮歌词：桌面代理安装包（含字体）/ 字体字号 / 设备清单 -->
               <div class="card set-sec">
                 <h3><span class="material-icons ic-sm">desktop_windows</span> 悬浮歌词</h3>
-                <div class="tip">在 Windows 电脑桌面悬浮显示正在播放的一句歌词，唱到的字变红、其余白字带灰阴影；播放暂停/网页关闭 15 秒后自动消失。仅 Windows（macOS 未提供）。</div>
+                <div class="tip">在 Windows 电脑桌面悬浮显示正在播放的一句歌词，唱到的字从左向右渐变变红（蒙版式柔和过渡）、其余白字带灰阴影；浮窗可拖到任意屏幕（含扩展屏）并记住位置；播放暂停/网页关闭 15 秒后自动消失。右键菜单可「本次退出」（下次开机自动回来）或「永久退出」（启动端托盘勾选「悬浮歌词」可重开）。仅 Windows（macOS 未提供）。</div>
                 <div class="sc-row">
                   <label class="sc-chk"><input type="checkbox" v-model="desk.on" @change="saveDeskOn" /> 播放音乐时显示桌面歌词（总开关）</label>
                 </div>
@@ -226,6 +226,12 @@
                   <button class="small" :disabled="setSaving" @click="saveDeskFont"><span class="material-icons ic-sm">save</span> 保存</button>
                 </div>
                 <div class="tip">{{ cfg.desk && cfg.desk.font_included ? '安装包自带思源黑体（SIL OFL 1.1，可再分发）' : '⚠️ 服务器缺字体文件，安装包将回退系统微软雅黑' }}</div>
+                <div class="lab">文字透明度</div>
+                <div class="sc-row">
+                  <input :value="Math.round((Number(desk.opacity) || 1) * 100)" type="range" min="15" max="100" step="5" style="width:180px" :disabled="setSaving" @change="onDeskOpacity" />
+                  <span class="tip" style="min-width:40px">{{ Math.round((Number(desk.opacity) || 1) * 100) }}%</span>
+                </div>
+                <div class="tip">透明度作用于整句歌词（含阴影），15%~100%；松开滑杆即保存，各设备约 2 秒后生效。</div>
                 <div class="sc-row">
                   <button class="small primary" :disabled="pkgBusy" @click="downloadPkg"><span class="material-icons ic-sm">{{ pkgBusy ? 'hourglass_empty' : 'download' }}</span> {{ pkgBusy ? '正在打包下载…别重复点' : '下载 Windows 安装包' + (cfg.desk && cfg.desk.font_included ? '（含字体）' : '') }}</button>
                   <button class="small" :disabled="pkgBusy" @click="downloadPkg('uninstall')"><span class="material-icons ic-sm">delete</span> 下载卸载包（轻量）</button>
@@ -420,7 +426,7 @@ function applyCfg(c) {
   for (const ch of (sc.channels || [])) if (!ch.no_url) urls[ch.id] = ch.url || '';
   scrapeUrls.value = urls;
   const d = c.desk || {};
-  desk.value = { on: d.on !== false, family: d.font_family || '', size: d.font_size || 36 };
+  desk.value = { on: d.on !== false, family: d.font_family || '', size: d.font_size || 36, opacity: typeof d.font_opacity === 'number' ? d.font_opacity : 1 };
 }
 function sourceLabel(s) {
   return s === 'setting' ? '地址来自本设置页' : s === 'env' ? '地址来自环境变量 MC_LRCLIB_BASE' : '内置默认';
@@ -450,7 +456,7 @@ const scrapeDirty = computed(() => {
   return ((cfg.value.scrape || {}).channels || []).some(urlDirty);
 });
 const scrape = ref({ channels: [], on: [], pending: 0, scraped: 0, running: false, done: 0, total: 0, found: 0, failed: 0, current: '', log: [], finished_at: 0 });
-const desk = ref({ on: true, family: '', size: 36 });
+const desk = ref({ on: true, family: '', size: 36, opacity: 1 });
 const agents = ref([]);
 // 安装包 8.4MB（含字体），公网下载要几十秒——不锁按钮会被连点出一排重复下载
 const pkgBusy = ref(false);
@@ -582,6 +588,12 @@ async function saveDeskFont() {
   try { applyCfg(await api.post('/mc/settings', { font_family: desk.value.family || '', font_size: Number(desk.value.size) || 36 })); flash('字体设置已保存（各设备约 2 秒后生效）'); }
   catch (e) { flash('保存失败：' + e.message); }
   setSaving.value = false;
+}
+async function onDeskOpacity(ev) {
+  const pct = Math.min(100, Math.max(15, parseInt(ev.target.value, 10) || 100));
+  desk.value.opacity = pct / 100;
+  try { applyCfg(await api.post('/mc/settings', { font_opacity: pct / 100 })); flash('透明度已保存（各设备约 2 秒后生效）'); }
+  catch (e) { flash('保存失败：' + e.message); }
 }
 async function downloadPkg(mode) {
   if (pkgBusy.value) return;

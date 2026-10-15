@@ -351,6 +351,8 @@ function Start-Agent([string]$k) {
   $a = $AgApps[$k]
   $p = Join-Path (Join-Path $env:LOCALAPPDATA $a.app) $a.file
   if (-not (Test-Path -LiteralPath $p)) { return }
+  # v1.18.5 永久退出握手：用户在托盘重新勾选 = 明确要开——摘掉客户端落的停用标记再拉起
+  try { Remove-Item -LiteralPath (Join-Path (Join-Path $env:LOCALAPPDATA $a.app) 'disabled.flag') -Force -ErrorAction SilentlyContinue } catch { }
   try {
     Start-Process powershell.exe -WindowStyle Hidden -ArgumentList ('-STA -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $p + '"')
     $st.startAt[$k] = (Get-Date).ToString('s')
@@ -528,6 +530,14 @@ function Update-StatusText {
     foreach ($k in @('monitor', 'clipboard', 'pet', 'lyrics')) {
       $x = $d[$k]
       if (-not $x.installed) { continue }
+      # v1.18.5 永久退出握手：客户端右键「永久退出」会落 disabled.flag——尊重它：
+      # 把托盘勾选翻成未勾并落盘（本拍 continue 跳过看护，下一拍自然走「未勾」分支）
+      if ($x.on -and (Test-Path -LiteralPath (Join-Path (Join-Path $env:LOCALAPPDATA $AgApps[$k].app) 'disabled.flag'))) {
+        $st[$k] = $false
+        $st.save = $true
+        Log ('客户端请求永久停用（disabled.flag），托盘已翻为未勾：' + $AgApps[$k].app)
+        continue
+      }
       if ($x.on -and -not $x.running) {
         $ago = 999
         $la = [string]$st.startAt[$k]

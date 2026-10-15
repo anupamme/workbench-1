@@ -84,6 +84,7 @@ function configPayload(req) {
       on: agent.deskOn(),
       font_family: agent.fontFamilySetting(),
       font_size: agent.fontSizeSetting(),
+      font_opacity: agent.fontOpacitySetting(),
       font_options: agent.FONT_OPTIONS,
       font_included: !!agent.bundledFont(),
       agent_key_set: /^[0-9a-f]{32}$/.test(String(getSetting(db, 'mc_agent_key', '') || '')),
@@ -164,6 +165,7 @@ router.post('/mc/settings', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(b, 'desk_on')) { agent.setDeskOn(!!b.desk_on); applied.push('desk_on'); }
   if (Object.prototype.hasOwnProperty.call(b, 'font_family')) { agent.setFontFamily(b.font_family); applied.push('font_family'); }
   if (Object.prototype.hasOwnProperty.call(b, 'font_size')) { agent.setFontSize(b.font_size); applied.push('font_size'); }
+  if (Object.prototype.hasOwnProperty.call(b, 'font_opacity')) { agent.setFontOpacity(b.font_opacity); applied.push('font_opacity'); }
   res.json({ ok: true, applied, ...configPayload(req) });
 });
 
