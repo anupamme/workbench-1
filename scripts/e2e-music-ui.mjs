@@ -526,6 +526,22 @@ try {
     const secTxt = (await deskSec.innerText()).replace(/\s+/g, '');
     ok(secTxt.includes('渐变变红') && secTxt.includes('扩展屏') && secTxt.includes('本次退出') && secTxt.includes('永久退出'),
       'K6e 卡内说明含渐变/多屏/两种退出文案');
+    // v1.18.7 本机声音门控：默认勾选；取消勾选立即落库 local_sound=false；再勾回来复原
+    const sndChk = deskSec.locator('label.sc-chk', { hasText: '正在出声' }).locator('input[type=checkbox]');
+    ok((await sndChk.count()) === 1, 'K6f-1 声音门控开关渲染');
+    if ((await sndChk.count()) === 1) {
+      ok(await sndChk.isChecked(), 'K6f-2 默认勾选（只在这台电脑出声时显示）');
+      await sndChk.uncheck();
+      await p.waitForTimeout(600);
+      const cfgS = await api('GET', '/api/mc/config', { token: T });
+      ok((cfgS.j.desk || {}).local_sound === false,
+        'K6f-3 取消勾选落库（/mc/config 回 local_sound=false）', JSON.stringify((cfgS.j.desk || {}).local_sound));
+      await sndChk.check();
+      await p.waitForTimeout(600);
+      const cfgS2 = await api('GET', '/api/mc/config', { token: T });
+      ok((cfgS2.j.desk || {}).local_sound === true,
+        'K6f-4 重新勾选恢复（回 local_sound=true）', JSON.stringify((cfgS2.j.desk || {}).local_sound));
+    }
   }
   ok((await p.locator('.zone .mc-set .tip', { hasText: '还没有电脑安装' }).count()) === 1,
     'K7 无设备时如实显示「还没有电脑安装」');

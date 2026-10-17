@@ -3,8 +3,10 @@
 // 凭证照电脑监控/剪贴板代理的「key 即凭证」模式：设备不持有用户 token，只持有
 // settings.mc_agent_key（32hex，管理员可轮换）。poll 是唯一免登录端点（index.js EXEMPT
 // 精确匹配 /mc/agent/poll），注册/心跳/配置下发/正在播放全在这一条 GET 里，agent 两秒一次。
-// 正在播放是进程内单份、后写覆盖先写（15 秒没人续报即视为停了）——全家场景只有一套音响在响，
+// 正在播放是进程内单份、后写覆盖先写（15 秒没人续报即视为停了）——服务端这一份是全家共享的，
 // 谁最后上报谁生效；浏览器侧由 musicState.js 节流上报（POST /mc/nowplaying，任意登录用户）。
+// v1.18.7：共享的那一份会让「另一台电脑」也跟着弹歌词（用户报障）——代理侧加本机声音门控
+// （探 Windows 输出设备峰值表，见 SOUND_PROBE_CS）：没在出声的电脑不显示，只有真正在放的那台显示。
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -96,6 +98,10 @@ function setFontOpacity(v) {
   if (!Number.isFinite(n)) return;
   setSetting(db, 'mc_font_opacity', String(Math.min(1, Math.max(0.15, Math.round(n * 100) / 100))));
 }
+// v1.18.7 本机声音门控：默认开——只有「这台电脑正在输出声音」才显示浮窗，
+// 多台电脑各显示各的；关掉=恢复旧行为（谁上报就所有设备都显示，用户明确要旧行为时用）
+function localSoundSetting() { return String(getSetting(db, 'mc_local_sound', '1') || '1') !== '0'; }
+function setLocalSound(v) { setSetting(db, 'mc_local_sound', v ? '1' : '0'); }
 // 空串 = 用安装包自带的思源黑体（agent 本地解析 file:///…font.otf#家族名）；其余 = 系统字体名
 const FONT_OPTIONS = [
   { v: '', n: '内置思源黑体（安装包自带）' },
@@ -181,11 +187,90 @@ function pollPayload(agent) {
     ok: true,
     device: { id: agent.id, name: agent.name || agent.computer || agent.id, show: !!agent.show },
     global_on: deskOn(),
+    // v1.18.7 本机声音门控（代理按这个开关决定「没出声就不显示」）；老代理不认这个字段也无害
+    local_sound: localSoundSetting(),
     font: { family: fontFamilySetting(), size: fontSizeSetting(), opacity: fontOpacitySetting() },
     now,
     server_time: Date.now(),
   };
 }
+
+// ---------- 本机声音探针 C#（v1.18.7；单一出处：PS 模板里以 __SOUND_PROBE_CS__ 占位注入） ----------
+// 数「这台电脑到底在不在出声」：枚举活动输出设备 → 激活 IAudioMeterInformation → 取峰值。
+// 只读，不碰音频流、不占麦克风、不要管理员权限；MaxPeak() 回 -1 = 拿不到表（调用方退回旧行为，宁可多显示）。
+// 注意：本常量要嵌进 JS 字符串，C# 里别用反引号 / $ 插值花括号，也别用单引号字符串（PS 模板注入后要过 Add-Type）。
+const SOUND_PROBE_CS = String.raw`using System;
+using System.Runtime.InteropServices;
+
+public static class WbSoundProbe
+{
+  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+  private class MMDeviceEnumeratorComObject { }
+
+  [ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IMMDeviceCollection
+  {
+    int GetCount(out int count);
+    int Item(int index, out IMMDevice device);
+  }
+
+  [ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IAudioMeterInformation
+  {
+    int GetPeakValue(out float peak);
+  }
+
+  [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IMMDevice
+  {
+    int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.Interface)] out IAudioMeterInformation meter);
+    int OpenPropertyStore(int access, out IntPtr store);
+    int GetId(out IntPtr id);
+    int GetState(out int state);
+  }
+
+  [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface IMMDeviceEnumerator
+  {
+    int EnumAudioEndpoints(int dataFlow, int stateMask, out IMMDeviceCollection devices);
+    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
+    int GetDevice(IntPtr id, out IMMDevice device);
+    int RegisterEndpointNotificationCallback(IntPtr client);
+    int UnregisterEndpointNotificationCallback(IntPtr client);
+  }
+
+  public static float MaxPeak()
+  {
+    bool sawMeter = false;
+    float max = 0f;
+    try
+    {
+      IMMDeviceEnumerator en = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+      IMMDeviceCollection col;
+      if (en.EnumAudioEndpoints(0, 1, out col) != 0 || col == null) return -1f;
+      int n;
+      col.GetCount(out n);
+      for (int i = 0; i < n; i++)
+      {
+        IMMDevice dev;
+        if (col.Item(i, out dev) != 0 || dev == null) continue;
+        Guid iid = typeof(IAudioMeterInformation).GUID;
+        IAudioMeterInformation m;
+        if (dev.Activate(ref iid, 23, IntPtr.Zero, out m) != 0 || m == null) continue;
+        float p;
+        if (m.GetPeakValue(out p) != 0) continue;
+        sawMeter = true;
+        if (p > max) max = p;
+      }
+    }
+    catch
+    {
+      return -1f;
+    }
+    if (!sawMeter) return -1f;
+    return max;
+  }
+}`;
 
 // ---------- 桌面歌词代理脚本（PowerShell 5.1 + WPF，Windows） ----------
 // 结构：后台 runspace 2s 轮询 poll 写进同步哈希表；主 runspace WPF 无边框置顶浮窗 +
@@ -197,6 +282,8 @@ const PS_TEMPLATE = String.raw`# ===============================================
 #  - -Cmd install   ：安装到 %LOCALAPPDATA%\WorkbenchLyrics + 设开机自启 + 启动
 #  - -Cmd uninstall ：停进程、删自启、删目录
 #  只读代理：只调 GET /api/mc/agent/poll（2 秒一次），不执行任何服务端下发的代码。
+#  v1.18.7 起再加一道本机声音门控：只有在「这台电脑正在输出声音」时才显示浮窗——
+#  多台电脑都装了代理时，没放歌的电脑不再跟着弹出（服务端那份「正在播放」是全家共享的）。
 #  退出方式：右键歌词浮窗 → 退出悬浮歌词。
 # =====================================================================
 param([string]$Cmd = '')
@@ -277,6 +364,37 @@ try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityP
 # 0 台设备的根因）。绕系统代理的正确写法是 WebRequest.DefaultWebProxy（PS5.1 实测可赋值）。
 try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch { }
 
+# ---------- 本机声音探针（v1.18.7） ----------
+# 服务端「正在播放」是全家共享的一份：A 电脑放歌，B 电脑的浮窗也会弹（用户报障）。
+# 修法是让每台代理自己判断「本机到底在不在出声」——读 Windows 音频引擎各活动输出设备的
+# 峰值表（只读，不碰音频流、不占麦克风、不要管理员权限）。停声后保持 8 秒再隐藏：
+# 歌与歌之间的空档、安静段落不会一闪一闪。
+# 探针不可用（Add-Type 失败 / 拿不到表）时一律退回旧行为「有播放就显示」，绝不让用户彻底没歌词。
+$script:soundOk = $false
+$script:soundOn = $true
+$script:soundSeenAt = [DateTime]::MinValue
+$script:soundOnly = $true   # 设置页「只在本机正在出声时显示」；老服务器不下发 local_sound 时保持开
+try {
+  Add-Type -TypeDefinition @'
+__SOUND_PROBE_CS__
+'@ -ErrorAction Stop
+  $script:soundOk = $true
+} catch {
+  try { Log ('声音探针不可用（退回旧行为：有播放就显示）：' + $_.Exception.Message) } catch { }
+}
+function Update-SoundState {
+  $on = $true
+  if ($script:soundOk) {
+    try {
+      $pk = [double][WbSoundProbe]::MaxPeak()
+      if ($pk -lt 0) { $on = $true }              # 拿不到峰值表 → 退回旧行为（宁可多显示）
+      else { $on = ($pk -ge 0.001) }
+    } catch { $on = $true }
+  }
+  if ($on) { $script:soundSeenAt = [DateTime]::Now }
+  $script:soundOn = $on -or (([DateTime]::Now - $script:soundSeenAt).TotalSeconds -le 8)
+}
+
 # 设备 ID：PC + SHA256(机器GUID|计算机名) 前 12 位（登记进工作台「已安装电脑」清单）
 $deviceId = 'PC-unknown'
 try {
@@ -295,6 +413,7 @@ $st.now = $null
 $st.font = $null
 $st.globalOn = $false
 $st.devShow = $false
+$st.soundOnly = $script:soundOnly   # v1.18.7 本机声音门控开关（poll 下发 local_sound）
 $st.recvAt = [DateTime]::MinValue
 $st.id = $deviceId
 $st.server = $server
@@ -313,6 +432,7 @@ while (-not $st.stop) {
     $st.now = $r.now
     $st.font = $r.font
     $st.globalOn = [bool]$r.global_on
+    if ($null -ne $r.local_sound) { $st.soundOnly = [bool]$r.local_sound } else { $st.soundOnly = $true }
     if ($r.device) { $st.devShow = [bool]$r.device.show } else { $st.devShow = $true }
     $st.recvAt = [DateTime]::Now
     if ($fail -gt 0 -and $st.logfile) {
@@ -448,7 +568,8 @@ function Update-Tick {
   $n = $st.now
   if ($null -ne $n -and $st.recvAt -gt [DateTime]::MinValue) {
     $age = ([DateTime]::Now - $st.recvAt).TotalSeconds
-    if ($age -le 15 -and $n.playing -and $st.globalOn -and $st.devShow) { $visible = $true }
+    # v1.18.7 声音门控：服务端说「有歌在放」+ 本机真在出声（或用户关了门控）才显示
+    if ($age -le 15 -and $n.playing -and $st.globalOn -and $st.devShow -and ((-not $st.soundOnly) -or $script:soundOn)) { $visible = $true }
   }
   if (-not $visible) { if ($script:win.IsVisible) { $script:win.Hide() }; return }
   # 字体/字号/透明度（设置页改了，下一次 poll 生效）
@@ -511,15 +632,23 @@ $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromMilliseconds(100)
 $null = $timer.Add_Tick({ Update-Tick })
 $timer.Start()
+# 声音门控（v1.18.7）：1 秒探一次本机是否在出声；8 秒保持做在 Update-SoundState 里
+$soundTimer = New-Object System.Windows.Threading.DispatcherTimer
+$soundTimer.Interval = [TimeSpan]::FromSeconds(1)
+$null = $soundTimer.Add_Tick({ Update-SoundState })
+$soundTimer.Start()
+try { Update-SoundState } catch { }
 $null = $win.Add_Closed({
   $script:st.stop = $true
   try { $script:timer.Stop() } catch { }
+  try { $script:soundTimer.Stop() } catch { }
   [System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvokeShutdown([System.Windows.Threading.DispatcherPriority]::Background)
 })
-Log ('启动：设备 ' + $deviceId + ' → ' + $server + '，字体包 ' + $(if ($script:haveFont) { '有' } else { '无（回退微软雅黑）' }))
+Log ('启动：设备 ' + $deviceId + ' → ' + $server + '，字体包 ' + $(if ($script:haveFont) { '有' } else { '无（回退微软雅黑）' }) + '，声音探针 ' + $(if ($script:soundOk) { '可用' } else { '不可用' }))
 try { [System.Windows.Threading.Dispatcher]::Run() } finally {
   $st.stop = $true
   try { $timer.Stop() } catch { }
+  try { $soundTimer.Stop() } catch { }
   try { $pollPs.Dispose() } catch { }
   try { $pollRs.Dispose() } catch { }
   try { $mtx.ReleaseMutex() } catch { }
@@ -570,13 +699,18 @@ const README_TXT = '\uFEFF' + [
   '【用法】在工作台网页里播放音乐即可：桌面底部浮窗只显示正在播放的一句，',
   '唱到的字从左向右渐变变红（蒙版式柔和过渡），其余白色带灰阴影。',
   '播放暂停/停止、或网页关掉 15 秒后浮窗自动消失。',
+  '浮窗只在「这台电脑真的在出声」的机器上显示：家里几台电脑都装了本插件时，',
+  '哪台在放音乐哪台才显示歌词，其余电脑安静不动（本机声音检测约 1 秒一次，',
+  '静音/没播放即隐藏，相邻歌曲的间隙 8 秒内不闪）。',
+  '若这台电脑的声卡检测不可用，会退回旧行为（有播放就显示）——宁多显示，不漏显示。',
   '浮窗可以按住左键拖到任意屏幕（包括扩展屏），松手即记住位置，重启后回到原地。',
   '右键菜单两项：「本次退出」（只退这一次，下次开机自动回来）与',
   '「永久退出」（停用 + 摘开机自启；之后在启动端托盘勾选「悬浮歌词」可重新打开，',
   '没装启动端的电脑重新运行一次安装.cmd 也可以）。',
   '',
   '【控制】工作台「人工智能 → 音乐 → 设置 → 悬浮歌词」里：总开关（关掉全部设备不显示）、',
-  '每台设备的单独开关、字体字号与文字透明度。改完约 2 秒生效（代理两秒一次心跳）。',
+  '每台设备的单独开关、「只在这台电脑出声时显示」（默认勾上）、字体字号与文字透明度。',
+  '改完约 2 秒生效（代理两秒一次心跳）。',
   '',
   '【卸载】双击 卸载.cmd（移除开机自启并删除程序目录）。',
   '',
@@ -592,12 +726,19 @@ const README_TXT = '\uFEFF' + [
 // baseUrl = 工作台对 Agent 可达的根地址（如 https://cc.in1912.cc）；key 嵌进脚本（key 即凭证）
 // opts.uninstall=true 出「卸载包」：setup.ps1 + 卸载.cmd + 使用说明（卸载走 setup.ps1 -Cmd uninstall，
 // 所以脚本必须带；不带 8.4MB 字体与安装.cmd，卸载场景要的就是个小包）
-function buildPackage(baseUrl, key, opts = {}) {
+// 渲染出最终 setup.ps1 文本：下载包里落地的字节就是这一份，自检直接断言它（别只断言模板）。
+function renderPs(baseUrl, key) {
   const font = bundledFont();
-  const ps = '\uFEFF' + PS_TEMPLATE
+  return '\uFEFF' + PS_TEMPLATE
     .replace(/__SERVER__/g, String(baseUrl || '').trim().replace(/\/+$/, ''))
     .replace(/__KEY__/g, key)
-    .replace(/__FONT_FAMILY__/g, font ? font.family : 'Microsoft YaHei');
+    .replace(/__FONT_FAMILY__/g, font ? font.family : 'Microsoft YaHei')
+    .replace('__SOUND_PROBE_CS__', () => SOUND_PROBE_CS);
+}
+
+function buildPackage(baseUrl, key, opts = {}) {
+  const font = bundledFont();
+  const ps = renderPs(baseUrl, key);
   const entries = [{ name: 'setup.ps1', data: ps }];
   if (!opts.uninstall) {
     if (font) entries.push({ name: font.name, data: fs.readFileSync(font.path) });
@@ -613,6 +754,7 @@ module.exports = {
   getAgentKey, rotateAgentKey, checkAgentKey,
   ensureAgent, listAgents, updateAgent, deleteAgent,
   deskOn, setDeskOn, fontFamilySetting, setFontFamily, fontSizeSetting, setFontSize, fontOpacitySetting, setFontOpacity, FONT_OPTIONS,
+  localSoundSetting, setLocalSound,
   setNowPlaying, getNowPlaying, parseLrc, linesForAgent, pollPayload,
-  PS_TEMPLATE, bundledFont, buildPackage,
+  PS_TEMPLATE, SOUND_PROBE_CS, bundledFont, renderPs, buildPackage,
 };

@@ -85,6 +85,7 @@ function configPayload(req) {
       font_family: agent.fontFamilySetting(),
       font_size: agent.fontSizeSetting(),
       font_opacity: agent.fontOpacitySetting(),
+      local_sound: agent.localSoundSetting(),
       font_options: agent.FONT_OPTIONS,
       font_included: !!agent.bundledFont(),
       agent_key_set: /^[0-9a-f]{32}$/.test(String(getSetting(db, 'mc_agent_key', '') || '')),
@@ -166,6 +167,8 @@ router.post('/mc/settings', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(b, 'font_family')) { agent.setFontFamily(b.font_family); applied.push('font_family'); }
   if (Object.prototype.hasOwnProperty.call(b, 'font_size')) { agent.setFontSize(b.font_size); applied.push('font_size'); }
   if (Object.prototype.hasOwnProperty.call(b, 'font_opacity')) { agent.setFontOpacity(b.font_opacity); applied.push('font_opacity'); }
+  // v1.18.7：本机声音门控（默认开）——关掉即退回「服务端说有播放就显示」的老行为
+  if (Object.prototype.hasOwnProperty.call(b, 'local_sound')) { agent.setLocalSound(!!b.local_sound); applied.push('local_sound'); }
   res.json({ ok: true, applied, ...configPayload(req) });
 });
 

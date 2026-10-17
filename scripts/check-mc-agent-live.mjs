@@ -61,6 +61,26 @@ ok(T.includes('GradientStop') && T.includes('$script:gsB.Offset') && !T.includes
 ok(T.includes('$script:win.Opacity') && T.includes('$st.font.opacity'),
   '①b 文字透明度应用（win.Opacity ← poll font.opacity）');
 
+// ---------- ①c v1.18.7 本机声音门控静态断言 ----------
+// 目的：一台电脑放歌、别的电脑不弹歌词——靠代理本机探「输出设备是否在出声」。
+// 这里只查「结构在不在」；真探针的值由 check-mc-sound-probe.mjs 独立验证。
+ok(T.includes('__SOUND_PROBE_CS__') && String(mcAgent.SOUND_PROBE_CS).includes('IAudioMeterInformation'),
+  '①c 模板留 C# 占位符，且 SOUND_PROBE_CS 是 Core Audio 峰值探针');
+ok(T.includes('Update-SoundState') && T.includes('$script:soundOn') && T.includes('$st.soundOnly'),
+  '①c 声音门控三件套（探针函数 / 本机出声状态 / 服务端开关）');
+ok(T.includes('$soundTimer.Interval = [TimeSpan]::FromSeconds(1)'),
+  '①c 1 秒一次本机声音探测（不走 poll runspace，WPF 主线程 DispatcherTimer）');
+ok(T.includes('(-not $st.soundOnly) -or $script:soundOn'),
+  '①c 可见性判定接上门控（关掉开关即退回旧行为）');
+// 下载包里落地的 setup.ps1 必须已替换占位符——漏了这步，代理会静默退回旧行为且用户看不出来
+{
+  const rendered = String(mcAgent.renderPs('http://stub', 'a'.repeat(32)));
+  ok(rendered.includes('public static class WbSoundProbe') && !rendered.includes('__SOUND_PROBE_CS__'),
+    '①c renderPs 已把 C# 探针注入下载脚本（无占位符残留）');
+  ok(rendered.includes('$st.soundOnly = [bool]$r.local_sound'),
+    '①c 下载脚本按 poll 的 local_sound 开关门控');
+}
+
 // ---------- ② 活体：隔离环境真跑 7 秒 ----------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wblyr-live-'));
 const APP_TEST = 'WbLyrLiveTest'; // 专用 AppName：InstDir/互斥体都不与真实安装相撞
@@ -83,6 +103,7 @@ const ps = '﻿' + mcAgent.PS_TEMPLATE
   .replace(/__SERVER__/g, `http://127.0.0.1:${port}`)
   .replace(/__KEY__/g, KEY)
   .replace(/__FONT_FAMILY__/g, 'Microsoft YaHei')
+  .replace('__SOUND_PROBE_CS__', () => mcAgent.SOUND_PROBE_CS)
   .replace("$AppName = 'WorkbenchLyrics'", `$AppName = '${APP_TEST}'`);
 const ps1 = path.join(tmp, 'setup.ps1');
 fs.writeFileSync(ps1, ps, 'utf8');
@@ -117,6 +138,9 @@ ok(polls.length >= 2, `② 轮询打到桩服务器 ≥2 次（2s 一轮，实�
 ok(polls.every((p) => p.key === KEY && /^PC[0-9a-f]{12}$/.test(p.id || '')),
   '② poll 带正确 key 与 PC+12hex 设备号', JSON.stringify(polls[0] || null).slice(0, 120));
 ok(logTxt.includes('启动：设备'), '② agent.log 写出「启动：设备」行（WPF 初始化通过）', logTxt.slice(0, 200));
+// 声音探针在真机上 Add-Type 编译要过（此处只断言日志把结果说出来了，可用/不可用都不算失败：
+// 老系统缺 csc 时允许退回旧行为，但代理必须如实记一笔，别静默）
+ok(/声音探针 (可用|不可用)/.test(logTxt), '② 启动日志报告声音探针可用性', logTxt.split('\r\n').find((l) => l.includes('声音探针')) || logTxt.slice(0, 200));
 
 // ---------- 收尾：杀进程、删临时目录 ----------
 try { child.kill(); } catch { }

@@ -216,6 +216,10 @@
                 <div class="sc-row">
                   <label class="sc-chk"><input type="checkbox" v-model="desk.on" @change="saveDeskOn" /> 播放音乐时显示桌面歌词（总开关）</label>
                 </div>
+                <div class="sc-row">
+                  <label class="sc-chk"><input type="checkbox" v-model="desk.localSound" @change="saveDeskLocalSound" /> 只在「这台电脑正在出声」时显示（多台电脑互不打扰）</label>
+                </div>
+                <div class="tip">默认勾选：家里几台电脑都装了代理时，只有真正在放歌的那台弹歌词，其余电脑保持安静。本机声音检测约 1 秒一次，相邻歌曲的间隙 8 秒内不闪；某台电脑的声卡检测不可用时会自动退回旧行为（有播放就显示）。需重新下载安装包才会在已装的电脑上生效。</div>
                 <div class="lab">字体</div>
                 <div class="sc-row">
                   <select v-model="desk.family" :disabled="setSaving">
@@ -426,7 +430,7 @@ function applyCfg(c) {
   for (const ch of (sc.channels || [])) if (!ch.no_url) urls[ch.id] = ch.url || '';
   scrapeUrls.value = urls;
   const d = c.desk || {};
-  desk.value = { on: d.on !== false, family: d.font_family || '', size: d.font_size || 36, opacity: typeof d.font_opacity === 'number' ? d.font_opacity : 1 };
+  desk.value = { on: d.on !== false, localSound: d.local_sound !== false, family: d.font_family || '', size: d.font_size || 36, opacity: typeof d.font_opacity === 'number' ? d.font_opacity : 1 };
 }
 function sourceLabel(s) {
   return s === 'setting' ? '地址来自本设置页' : s === 'env' ? '地址来自环境变量 MC_LRCLIB_BASE' : '内置默认';
@@ -456,7 +460,7 @@ const scrapeDirty = computed(() => {
   return ((cfg.value.scrape || {}).channels || []).some(urlDirty);
 });
 const scrape = ref({ channels: [], on: [], pending: 0, scraped: 0, running: false, done: 0, total: 0, found: 0, failed: 0, current: '', log: [], finished_at: 0 });
-const desk = ref({ on: true, family: '', size: 36, opacity: 1 });
+const desk = ref({ on: true, localSound: true, family: '', size: 36, opacity: 1 });
 const agents = ref([]);
 // 安装包 8.4MB（含字体），公网下载要几十秒——不锁按钮会被连点出一排重复下载
 const pkgBusy = ref(false);
@@ -582,6 +586,12 @@ async function clearLyr() {
 async function saveDeskOn() {
   try { applyCfg(await api.post('/mc/settings', { desk_on: desk.value.on })); }
   catch (e) { flash('保存失败：' + e.message); desk.value.on = !desk.value.on; }
+}
+async function saveDeskLocalSound() {
+  try {
+    applyCfg(await api.post('/mc/settings', { local_sound: desk.value.localSound }));
+    flash(desk.value.localSound ? '已改为「只在这台电脑出声时显示」' : '已改为「有播放就显示」（旧行为，多台电脑会一起弹）');
+  } catch (e) { flash('保存失败：' + e.message); desk.value.localSound = !desk.value.localSound; }
 }
 async function saveDeskFont() {
   setSaving.value = true;
