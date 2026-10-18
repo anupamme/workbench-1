@@ -62,6 +62,9 @@ export const TAB_DEFS = {
     // 地理（v1.13.14）：第三方「地球仪 · 3D模拟实验室 V0916-1」整页原样嵌入（iframe 全高），
     // 无自有 API（auth.js TAB_PATHS.learning 给空前缀，只为授权表列全键）
     { key: 'geo', label: '地理' },
+    // 全科教材（v1.19.0）：独立版 D:\CC\Textbook 整套嵌进来（/textbook/ iframe，同源自带登录态）。
+    // 接口 /api/textbook/* 归本 tab 权限；内容改动先改独立版，再跑 scripts/sync-workbench.mjs 同步。
+    { key: 'textbook', label: '教材' },
     // 隐藏伪 tab：不出现在页内 tab 栏，但权限表里可勾选（对应受限子功能）
     { key: 'pianoconfirm', label: '练琴确认', restricted: true, hidden: true },
     { key: 'wishset', label: '心愿卡设置', restricted: true, hidden: true },

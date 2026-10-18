@@ -100,6 +100,9 @@ function pageForPath(p) {
   if (p.startsWith('/tts/manage') || p.startsWith('/tts/engine')) return 'tools';
   if (p.startsWith('/tts')) return null;
   if (p.startsWith('/vstudy')) return 'learning'; // 视频教学（目录/播放/记录/设置/学时流水）归学习页
+  // 全科教材（v1.19.0）：/textbook/* 是学习页「教材」tab 的接口（含上传笔记/批注）。
+  // 漏这行 = 落 null「仅需登录」，没勾教材 tab 的成员也能读写教材数据。
+  if (p.startsWith('/textbook')) return 'learning';
   // 视频中心（v1.9.26）：vstudy 的精简版（无学年学科/学时/注意力），归智能家居页 videocenter tab
   if (p.startsWith('/vc')) return 'smarthome';
   // 音乐中心（v1.16.0）：/mc 整块（曲库/扫描/流播/封面/收藏/歌词）归智能家居页 music tab
@@ -214,6 +217,8 @@ const TAB_PATHS = {
     // 地理（v1.13.14）：第三方地球仪整页 iframe 嵌入，**无自有 API**——空数组 = 只为授权表
     // 列全键（缺键时受限用户 allowed_tabs 里勾过的 geo 会被 sanitizeTabs 剥掉）
     ['geo', []],
+    // 全科教材（v1.19.0）：/textbook/* 全部接口（目录/阅读/批注侧车/笔记/分享/AI分析）
+    ['textbook', ['/textbook']],
   ],
   tools: [
     ['clip', ['/clipboard']],

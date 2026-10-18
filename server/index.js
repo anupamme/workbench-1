@@ -4,7 +4,7 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 const express = require('express');
-const { onImported, getTenantDb, dataDir, ensureLocalUser, forEachTenant } = require('./db');
+const { db, onImported, getTenantDb, dataDir, ensureLocalUser, forEachTenant } = require('./db');
 const ipBan = require('./services/ipBanService');
 const auth = require('./auth');
 const coreRoutes = require('./routes/core');
@@ -70,6 +70,11 @@ if (!SH_MODE) {
   zhizu.start();
 }
 
+// 全科教材（v1.19.0）：笔记正文把粘贴的截图压成 base64 内嵌，一篇带十几张图就能过 12mb。
+// 只给 /api/textbook 放宽到 20mb，其余接口维持原上限；放在全局 json 解析之前——
+// body-parser 解析后置 req._body，后面的全局中间件会自动跳过。
+if (!SH_MODE) app.use('/api/textbook', express.json({ limit: '20mb' }));
+
 app.use(express.json({ limit: '12mb' })); // 家庭图床图片以 base64 JSON 提交（原图上限 5MB ≈ base64 6.7MB）
 
 // 花生壳 HTTP 型映射会直接掐掉 PATCH 方法的连接（实测 GET/POST/PUT/DELETE 均可达、PATCH 必断）；
@@ -104,7 +109,8 @@ const EXEMPT = ['/auth/login', '/auth/fnos-login', '/health', '/tile', '/map-sta
   '/pets/desktop', // 桌面宠物（key 即凭证：state/frame/action）
   '/mc/agent/poll', // 悬浮歌词代理（v1.17.0：精确匹配这一条，key 即凭证——注册/心跳/配置/正在播放一条 GET；/mc/agent/package 下载必须留在登录闸内，别放前缀 '/mc/agent'）
   '/launcher/agent/poll', // 集中启动端代理（v1.18.0：同上精确匹配这一条——在场/状态上报/取回未读消息一条 GET；/launcher/agent/package 下载留登录闸内）
-  '/share', '/note-intake']; // 笔记分享（token+4位码即凭证）/ 外部写入令牌（v1.9.39）。⚠️ 路由内一律 403/404，绝不 401
+  '/share', '/note-intake', // 笔记分享（token+4位码即凭证）/ 外部写入令牌（v1.9.39）。⚠️ 路由内一律 403/404，绝不 401
+  '/textbook/pub']; // 教材笔记分享（v1.19.0）：只放行公开只读 /textbook/pub/:token，其余 /textbook/* 仍走登录闸
 app.use('/api', (req, res, next) => {
   // 数字人参考图公网直取（v1.12.1）：Vivix 服务器建会话时要下载 source_images 的 URL，它没有
   // 工作台登录态——URL 里带 dhService 签发的短时签名令牌（?it=，只绑这一张图、2 小时有效）。
@@ -170,6 +176,35 @@ app.use('/api', (req, res, next) => {
   if (SH_API_ALLOW.some((a) => p === a || p.startsWith(a + '/'))) return next();
   res.status(404).json({ error: '该功能不在「智能家居」应用中' });
 });
+
+// 全科教材（v1.19.0）：学习页「教材」tab 的 /api/textbook/*。
+// 与独立版 D:\CC\Textbook 同一套源码（scripts/sync-workbench.mjs 同步到 server/textbook/），
+// 数据落各登录用户的租户库（tb_* 表），AI 复用工作台设置里的模型，用户/权限跟工作台一致。
+// 每个租户库一个 router 实例（建表幂等），Map 挂在模块级，租户库本身由 db.js 缓存。
+const textbookRouters = new Map();
+function textbookRouterFor(req) {
+  const tdb = req.tdb || db;
+  let r = textbookRouters.get(tdb);
+  if (!r) {
+    require('./textbook/schema').ensureSchema(tdb);
+    r = require('./textbook/router').createRouter({
+      db: tdb,
+      ai: require('./services/aiService'),
+      defaultRoot: process.env.TEXTBOOK_ROOT || '',
+      listUsers: () => db.prepare('SELECT id, username, display_name, nickname, role FROM users WHERE is_bot = 0 ORDER BY id').all(),
+      isAdmin: (rq) => !!(rq.user && rq.user.role === 'admin'),
+      manageUsers: false,
+      aiConfig: false,
+      embedded: true,
+      mountBase: '/textbook',
+    });
+    textbookRouters.set(tdb, r);
+  }
+  return r;
+}
+if (!SH_MODE) {
+  app.use('/api/textbook', (req, res, next) => textbookRouterFor(req)(req, res, next));
+}
 
 // API 路由
 app.use('/api', authRoutes);
