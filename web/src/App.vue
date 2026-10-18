@@ -15,16 +15,26 @@
     </div>
     <div v-if="menuOpen" class="mobile-mask" @click="menuOpen = false"></div>
 
-    <aside class="sidebar" :class="{ open: menuOpen }">
-      <div class="logo"><span class="dot"></span>{{ sysName }}<NetBadge /></div>
+    <!-- v1.18.8：左侧目录可向左收缩成图标栏（只留图标），收缩后左上角只剩三横图标用于展开 -->
+    <aside class="sidebar" :class="{ open: menuOpen, collapsed: navCollapsed }">
+      <div class="side-head">
+        <div class="logo"><span class="dot"></span><span class="logo-name">{{ sysName }}</span><NetBadge /></div>
+        <button class="nav-toggle" :title="navCollapsed ? '展开目录' : '收起目录'"
+                :aria-label="navCollapsed ? '展开目录' : '收起目录'" @click="toggleNav">
+          <span class="material-icons">{{ navCollapsed ? 'menu' : 'chevron_left' }}</span>
+        </button>
+      </div>
       <nav class="nav">
-        <router-link v-for="n in visibleNavs" :key="n.to" :to="n.to" @click="menuOpen = false">
-          <span class="ico material-icons" aria-hidden="true">{{ n.icon }}</span>{{ n.label }}
+        <router-link v-for="n in visibleNavs" :key="n.to" :to="n.to" @click="menuOpen = false"
+                     :title="navCollapsed ? n.label : null">
+          <span class="ico material-icons" aria-hidden="true">{{ n.icon }}</span><span class="lbl">{{ n.label }}</span>
         </router-link>
       </nav>
       <div class="sidebar-foot">
-        <span class="muted">{{ user?.username }}（{{ user?.role === 'admin' ? '管理员' : '成员' }}）</span>
-        <a class="link small" @click="logout" style="cursor:pointer">退出登录</a>
+        <span class="muted user-line">{{ user?.username }}（{{ user?.role === 'admin' ? '管理员' : '成员' }}）</span>
+        <a class="link small logout-link" title="退出登录" @click="logout" style="cursor:pointer">
+          <span class="material-icons">logout</span><span class="lbl">退出登录</span>
+        </a>
       </div>
     </aside>
 
@@ -120,6 +130,13 @@ const route = useRoute();
 // 公开页 = 路由 meta.public（登录页 + 笔记分享页 #/s/:token，v1.9.39）。这类页面渲染裸布局。
 const isBare = computed(() => !!route.meta.public);
 const menuOpen = ref(false);
+
+// 左侧目录收缩（v1.18.8）：true = 只剩图标栏。记忆在 localStorage，跨页面/刷新保持。
+const navCollapsed = ref(localStorage.getItem('wb_nav_collapsed') === '1');
+function toggleNav() {
+  navCollapsed.value = !navCollapsed.value;
+  try { localStorage.setItem('wb_nav_collapsed', navCollapsed.value ? '1' : '0'); } catch { /* 隐私模式忽略 */ }
+}
 
 // 内容区不限宽开关（v1.10.20，lifeOS「领域」页专属）：.main 默认 1200px 封顶，
 // 领域竖列看板要吃满整屏。由领域面板自己通过 inject 置 true（挂载开 / 卸载关），

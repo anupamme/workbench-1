@@ -129,6 +129,8 @@ body {
   top: 0;
   height: 100vh;
   overflow-y: auto;
+  overflow-x: hidden;
+  transition: width .18s ease, padding .18s ease;
 }
 
 .logo {
@@ -141,6 +143,29 @@ body {
   gap: 8px;
 }
 .logo .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent2); display: inline-block; }
+
+/* ---------- 目录收缩（v1.18.8） ---------- */
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 4px 16px 6px; }
+.side-head .logo { padding: 0; flex: 1; min-width: 0; }
+.logo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-toggle {
+  width: 30px; height: 30px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; border-radius: 8px;
+  color: var(--text2); cursor: pointer; padding: 0;
+}
+.nav-toggle:hover { background: var(--bg3); color: var(--text); }
+.nav-toggle .material-icons { font-size: 20px; }
+
+/* 收缩态：60px 图标栏，左上角只留三横图标 */
+.sidebar.collapsed { width: 60px; padding: 18px 8px; }
+.sidebar.collapsed .side-head { justify-content: center; padding: 0 0 16px; }
+.sidebar.collapsed .side-head .logo { display: none; }
+.sidebar.collapsed .nav a { justify-content: center; gap: 0; padding: 10px 0; }
+.sidebar.collapsed .sidebar-foot { align-items: center; padding: 12px 0 4px; }
+.sidebar.collapsed .sidebar-foot .user-line { display: none; }
+.sidebar.collapsed .logout-link { justify-content: center; padding: 6px 0; width: 100%; }
+.sidebar.collapsed .lbl { display: none; }
 
 .sidebar .nav a {
   display: flex;
@@ -345,6 +370,8 @@ a.link:hover { text-decoration: underline; }
   margin-top: 14px; padding: 12px 10px 4px;
   display: flex; flex-direction: column; gap: 6px;
 }
+.logout-link { display: flex; align-items: center; gap: 9px; }
+.logout-link .material-icons { font-size: 17px; line-height: 1; }
 
 .login-wrap {
   position: relative;
@@ -461,6 +488,16 @@ a.link:hover { text-decoration: underline; }
     box-shadow: 0 0 30px rgba(0,0,0,.4);
   }
   .sidebar.open { transform: translateX(0); }
+  /* 手机上目录是抽屉，收缩态不生效（展开/收起交给顶栏 ☰） */
+  .nav-toggle { display: none; }
+  .sidebar.collapsed { width: 232px; padding: 18px 12px; }
+  .sidebar.collapsed .side-head { justify-content: space-between; padding: 0 4px 16px 6px; }
+  .sidebar.collapsed .side-head .logo { display: flex; }
+  .sidebar.collapsed .nav a { justify-content: flex-start; gap: 9px; padding: 8px 10px; }
+  .sidebar.collapsed .sidebar-foot { align-items: stretch; padding: 12px 10px 4px; }
+  .sidebar.collapsed .sidebar-foot .user-line { display: inline; }
+  .sidebar.collapsed .logout-link { justify-content: flex-start; padding: 0; }
+  .sidebar.collapsed .nav .lbl, .sidebar.collapsed .lbl { display: inline; }
 
   .main { padding: 14px 12px 80px; max-width: 100%; }
   .page-title { font-size: 17px; margin-bottom: 12px; }
