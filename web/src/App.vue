@@ -131,8 +131,9 @@ const route = useRoute();
 const isBare = computed(() => !!route.meta.public);
 const menuOpen = ref(false);
 
-// 左侧目录收缩（v1.18.8）：true = 只剩图标栏。记忆在 localStorage，跨页面/刷新保持。
-const navCollapsed = ref(localStorage.getItem('wb_nav_collapsed') === '1');
+// 左侧目录收缩（v1.18.8；v1.18.9 改为默认收缩）：true = 只剩图标栏。
+// 默认（含首次登录、换浏览器）= 收缩；只有用户主动点 ☰ 展开过（localStorage 记 '0'）才保持展开。
+const navCollapsed = ref(localStorage.getItem('wb_nav_collapsed') !== '0');
 function toggleNav() {
   navCollapsed.value = !navCollapsed.value;
   try { localStorage.setItem('wb_nav_collapsed', navCollapsed.value ? '1' : '0'); } catch { /* 隐私模式忽略 */ }

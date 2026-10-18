@@ -1,10 +1,9 @@
-// E2E（v1.18.8）：左侧目录可收缩成图标栏。
+// E2E（v1.18.8，v1.18.9 改为默认收缩）：左侧目录可收缩成图标栏。
 // 验的是真浏览器里的行为，不是静态 DOM：
-//   ① 展开态 190px，文字可见，左上角有「收起」按钮
-//   ② 点收起 → 60px 图标栏，只剩图标（文字 label 不可见），左上角只剩三横 ☰
-//   ③ 收缩记忆在 localStorage，刷新后仍是收缩态
-//   ④ 点 ☰ 能展开回 190px 带文字，且 localStorage 记为 0
-//   ⑤ 手机上目录是抽屉：收缩态不生效（仍 232px、文字还在），由顶栏 ☰ 开关
+//   ① 首次登录（新浏览器、localStorage 无记录）默认收缩：60px 图标栏、只剩 ☰
+//   ② 用户主动点 ☰ 展开 → 190px 带文字，并记为「这个人要展开」（localStorage '0'）
+//   ③ 刷新后保持展开；再点 ‹ 收起也记得住（'1'）
+//   ④ 手机目录是抽屉：收缩态不生效（仍 232px、文字还在），由顶栏 ☰ 开关
 // 隔离 DATA_DIR + 独立端口，跑完即删。
 //   node scripts/e2e-nav-collapse.mjs
 import { chromium } from 'playwright';
@@ -23,6 +22,7 @@ try {
   await ctx.addInitScript(([t, u]) => {
     localStorage.setItem('wb_token', t);
     localStorage.setItem('wb_user', u);
+    // 注意：不碰 wb_nav_collapsed —— 新上下文本来就是空的，正好验「首次登录默认收缩」
   }, [lg.token, JSON.stringify(lg.user)]);
   const p = await ctx.newPage();
   const perr = [];
@@ -44,49 +44,48 @@ try {
   const toggleIcon = () => p.locator('.nav-toggle .material-icons').innerText();
   const firstLabel = (await p.locator('.sidebar .nav a .lbl').first().innerText()).trim();
 
-  // ---------- A. 展开态 ----------
-  ck('A1 默认展开：目录宽 190px', (await sideW()) === 190, await sideW());
-  ck('A2 展开态菜单文字可见', await lblVisible());
-  ck('A3 左上角有收起按钮（chevron_left）', (await p.locator('.nav-toggle').count()) === 1 && (await toggleIcon()) === 'chevron_left', await toggleIcon());
-  ck('A4 展开态 logo 文字可见', await p.locator('.sidebar .logo-name').isVisible());
-  ck('A5 默认 localStorage 未记收缩', (await p.evaluate(() => localStorage.getItem('wb_nav_collapsed'))) !== '1');
+  // ---------- A. 首次登录：默认收缩 ----------
+  ck('A1 首次登录默认收缩：目录宽 60px', (await sideW()) === 60, await sideW());
+  ck('A2 默认带 collapsed 类', await p.locator('.sidebar.collapsed').count() === 1);
+  ck('A3 默认菜单文字隐藏', !(await lblVisible()));
+  ck('A4 默认只剩三横 ☰ 展开按钮', (await p.locator('.nav-toggle').count()) === 1 && (await toggleIcon()) === 'menu', await toggleIcon());
+  ck('A5 默认 logo 文字隐藏（左上角只有 ☰）', !(await p.locator('.sidebar .logo-name').isVisible()));
+  ck('A6 图标仍可见（22px 图标列）', await iconVisible());
+  const tip = await p.locator('.sidebar .nav a').first().getAttribute('title');
+  ck('A7 收缩时图标带 title 提示（悬浮显示菜单名）', tip === firstLabel, `${tip} vs ${firstLabel}`);
+  ck('A8 默认没写 localStorage（未做选择就不落偏好）', (await p.evaluate(() => localStorage.getItem('wb_nav_collapsed'))) === null, String(await p.evaluate(() => localStorage.getItem('wb_nav_collapsed'))));
 
-  // ---------- B. 收起 ----------
+  // ---------- B. 用户主动展开：记住「我要展开」 ----------
   await p.locator('.nav-toggle').click();
   await sleep(350);
-  ck('B1 收起后宽度 60px 图标栏', (await sideW()) === 60, await sideW());
-  ck('B2 目录带 collapsed 类', await p.locator('.sidebar.collapsed').count() === 1);
-  ck('B3 菜单文字全部隐藏', !(await lblVisible()));
-  ck('B4 图标仍然可见（22px 图标列）', await iconVisible());
-  ck('B5 收缩后左上角只剩三横 ☰（logo 文字让位）', !(await p.locator('.sidebar .logo-name').isVisible()) && (await toggleIcon()) === 'menu', await toggleIcon());
-  const tip = await p.locator('.sidebar .nav a').first().getAttribute('title');
-  ck('B6 收缩时图标带 title 提示（悬浮显示菜单名）', tip === firstLabel, `${tip} vs ${firstLabel}`);
-  ck('B7 localStorage 记为 1', (await p.evaluate(() => localStorage.getItem('wb_nav_collapsed'))) === '1');
+  ck('B1 点 ☰ 展开 → 190px 带文字', (await sideW()) === 190 && await lblVisible(), String(await sideW()));
+  ck('B2 展开后按钮变成 ‹（收起）', (await toggleIcon()) === 'chevron_left', await toggleIcon());
+  ck('B3 展开选择记进 localStorage = 0', (await p.evaluate(() => localStorage.getItem('wb_nav_collapsed'))) === '0');
+  ck('B4 展开后 hover 空 title（用可见文字而非提示）', (await p.locator('.sidebar .nav a').first().getAttribute('title')) === null);
 
-  // ---------- C. 刷新保持 ----------
+  // ---------- C. 刷新保持展开 ----------
   await p.reload({ waitUntil: 'domcontentloaded' });
   await p.waitForSelector('.sidebar .nav a', { timeout: 20000 });
   await sleep(300);
-  ck('C1 刷新后仍是收缩态（60px）', (await sideW()) === 60, await sideW());
-  ck('C2 刷新后仍是 ☰ 展开按钮', (await toggleIcon()) === 'menu');
-  ck('C3 刷新后文字仍隐藏、图标仍在', !(await lblVisible()) && await iconVisible());
+  ck('C1 刷新后仍是展开态 190px（主动展开过就一直展开）', (await sideW()) === 190, String(await sideW()));
+  ck('C2 刷新后文字仍可见', await lblVisible());
 
-  // 收缩态下点导航仍能跳页且保持收缩
+  // 展开态下点导航仍正常
   await p.locator('.sidebar .nav a').nth(1).click();
   await sleep(500);
-  ck('C4 收缩态点图标能正常跳页且不弹开目录', (await sideW()) === 60 && !p.url().endsWith('#/'), p.url());
+  ck('C3 展开态点菜单能正常跳页', !p.url().endsWith('#/'), p.url());
 
-  // ---------- D. 展开回来 ----------
+  // ---------- D. 主动收起：也记得住 ----------
   await p.locator('.nav-toggle').click();
   await sleep(350);
-  ck('D1 点 ☰ 展开回 190px', (await sideW()) === 190, await sideW());
-  ck('D2 菜单文字回来了', await lblVisible());
-  ck('D3 展开后 localStorage 记为 0', (await p.evaluate(() => localStorage.getItem('wb_nav_collapsed'))) === '0');
-  ck('D4 展开后 hover 空 title（用可见文字而非提示）', (await p.locator('.sidebar .nav a').first().getAttribute('title')) === null);
+  ck('D1 点 ‹ 收起回 60px', (await sideW()) === 60, String(await sideW()));
+  ck('D2 收起选择记进 localStorage = 1', (await p.evaluate(() => localStorage.getItem('wb_nav_collapsed'))) === '1');
+  await p.reload({ waitUntil: 'domcontentloaded' });
+  await p.waitForSelector('.sidebar .nav a', { timeout: 20000 });
+  await sleep(300);
+  ck('D3 刷新后仍是收缩态 60px', (await sideW()) === 60 && (await toggleIcon()) === 'menu', String(await sideW()));
 
   // ---------- E. 手机抽屉不受收缩态影响 ----------
-  await p.locator('.nav-toggle').click(); // 先收回收缩态
-  await sleep(350);
   await p.setViewportSize({ width: 390, height: 844 });
   await sleep(350);
   ck('E1 手机上抽屉里的收缩按钮隐藏', !(await p.locator('.nav-toggle').isVisible()));
