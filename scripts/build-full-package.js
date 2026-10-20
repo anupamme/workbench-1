@@ -114,6 +114,14 @@ async function main() {
   // 应用侧 applyTargetPath 早就认 zhizu/ 前缀，两端从此对齐。
   const srcRels = walkServer('server', []);
   if (fs.existsSync(path.join(ROOT, 'zhizu'))) srcRels.push(...walkServer('zhizu', []));
+  // vibeasr/（转写引擎二进制，v1.18.x 起一直缺席升级包）：Windows 客户端安装包的引擎四件套
+  // 由服务端 <app>/vibeasr/win-x64 下发，生产容器镜像打于该目录入仓之前、差分/最小包又不带它
+  // → 2026-10-20 客户端装到一半报「服务器没有下发 Windows 引擎二进制」。全量包从此整目录带上；
+  // linux-x64 静态产物一并随包（Linux 部署用它，不进客户端下发清单）。
+  if (fs.existsSync(path.join(ROOT, 'vibeasr'))) {
+    require('./vibeasr-files').collectVibeasrWinEntries(); // 四件套缺一件直接 throw，不发废包
+    srcRels.push(...walkServer('vibeasr', []));
+  }
   for (const rel of srcRels) {
     const data = fs.readFileSync(path.join(ROOT, rel));
     entries.push({ name: rel, data });

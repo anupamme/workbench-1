@@ -5,8 +5,9 @@
 // apply 是合并覆盖语义（不带的服务器文件保持现状），所以只要版本锚点 + 变更内容齐了就是合法升级。
 // ⚠️ 前提：目标机当前版本与本仓库同源且较新（server 侧没漏改动）。server 代码有改动时，
 //    把改动文件用 --extra 显式带上，或干脆走 build-full-package.js。
-// 用法：node scripts/build-min-package.js <版本号 如 1.12.6> [--extra <仓库相对路径>]... [--no-fpk]
-//   --extra 可多次；默认自动带 server/fnos/*.fpk 与最新 web/dist/<时间戳>/。
+// 用法：node scripts/build-min-package.js <版本号 如 1.12.6> [--extra <仓库相对路径>]... [--no-fpk] [--no-vibeasr]
+//   --extra 可多次；默认自动带 server/fnos/*.fpk、最新 web/dist/<时间戳>/ 与 vibeasr/win-x64 四件套。
+//   --no-vibeasr 不带客户端引擎四件套（约 5.6MB）——只在确定服务器上已有该目录时用。
 //   --no-fpk 不带 fpk（fpk 66MB 是体积大头）：本机与生产不同网、只能走公网 cc.in1912.cc apply 时
 //   必须用——Cloudflare 对上传有 ~100s 墙，65MB 基本必 502，6MB 的 dist 增量秒过。
 //   fpk 只服务 7777 飞牛实例（随测试环境全量包升级），生产增量不带不影响运行。
@@ -20,6 +21,7 @@ const version = String(process.argv[2] || '').trim();
 if (!/^[\w.-]+$/.test(version)) { console.error('用法：node scripts/build-min-package.js <版本号> [--extra <仓库相对路径>] [--no-fpk]'); process.exit(1); }
 const extras = [];
 const noFpk = process.argv.includes('--no-fpk');
+const noVibeasr = process.argv.includes('--no-vibeasr');
 for (let i = 3; i < process.argv.length; i++) {
   if (process.argv[i] === '--extra') { extras.push(String(process.argv[++i] || '')); }
 }
@@ -59,6 +61,14 @@ if (!noFpk) {
   }
 }
 
+// 2b) 客户端引擎四件套（vibeasr/win-x64，约 5.6MB）——默认必带。
+// 生产容器 <app>/vibeasr/win-x64 在 v1.18.x 的最小包里一直缺席，Windows 客户端安装包
+// 从服务端拉不到引擎，装到一半即报缺文件（2026-10-20 实测）。5.6MB 远不到 Cloudflare
+// 上传墙，除非明确知道服务器上已有该目录，否则别用 --no-vibeasr。
+if (!noVibeasr) {
+  for (const f of require('./vibeasr-files').collectVibeasrWinEntries()) addFile(f.abs, f.rel);
+}
+
 // 3) --extra 显式指定的文件（如本轮的 server/routes/upgradeRoutes.js）
 for (const rel of extras) {
   const abs = path.join(ROOT, rel);
@@ -68,8 +78,8 @@ for (const rel of extras) {
 
 const now = new Date();
 const meta = {
-  version, title: `最小升级包 ${version}（前端 dist + fpk${extras.length ? ' + ' + extras.length + ' 个指定文件' : ''}）`,
-  content: '最小升级包：apply 合并覆盖语义——只带本版变更（新 dist 目录 + 最新 fpk' + (extras.length ? ' + 显式指定的 server 文件' : '') + '），未带的文件在目标机保持现状。适用于 server 无（或仅少量）改动的版本。',
+  version, title: `最小升级包 ${version}（前端 dist + fpk${noVibeasr ? '' : ' + 引擎四件套'}${extras.length ? ' + ' + extras.length + ' 个指定文件' : ''}）`,
+  content: '最小升级包：apply 合并覆盖语义——只带本版变更（新 dist 目录 + 最新 fpk' + (noVibeasr ? '' : ' + vibeasr/win-x64 客户端引擎四件套') + (extras.length ? ' + 显式指定的 server 文件' : '') + '），未带的文件在目标机保持现状。适用于 server 无（或仅少量）改动的版本。',
   dist, files, dist_files: files.filter((f) => f.path.startsWith('web/dist/')).length,
   created_at: now.toISOString(), created_by: 'admin',
 };
@@ -85,6 +95,7 @@ console.log(`== 最小升级包已生成 ==`);
 console.log(`  文件：${pkgName}（${(zipBuf.length / 1048576).toFixed(2)} MB，${entries.length} 个条目）`);
 console.log(`  位置：${path.join(pkgDir, pkgName)}`);
 console.log(`  dist：${dist}（${meta.dist_files} 文件）· fpk：${files.filter((f) => f.path.startsWith('server/fnos/')).map((f) => path.basename(f.path)).join(', ') || '无'}`);
+console.log(`  vibeasr：${files.filter((f) => f.path.startsWith('vibeasr/')).map((f) => path.basename(f.path)).join(', ') || '未带（--no-vibeasr）'}`);
 if (extras.length) console.log(`  extra：${extras.join(', ')}`);
 const mb = zipBuf.length / 1048576;
 console.log(mb > 256 ? `  ⚠️ ${(mb).toFixed(1)}MB 超 apply 上限 256MB，传不上去！` : mb > 100 ? `  注意：超旧版 100MB 上限——目标机须已含 256MB 修复（v1.12.6+）` : `  ${mb.toFixed(1)}MB < 100MB，任何版本上限都可直接 apply`);

@@ -610,6 +610,8 @@ python Logs/build-fpk-sh.py                # → server/fnos-sh/智能家居-飞
 
 **方式二（系统内差分升级）**：本地工作台「设置 → 升级管理」检测改动、打包（源码 + 前端构建快照 + manifest）、下载 zip，再到目标机工作台上传应用，服务自动重启生效。升级日志全程记录版本号与内容，两端都能看到当前运行版本。`scripts/build-full-package.js` 可生成含依赖闭包的完整版升级包，供老容器免 `npm install` 直接升级。
 
+升级包（全量 / 最小 / 差分）默认都携带 `vibeasr/win-x64/` 的客户端引擎四件套（`asr_stream_server.exe` + 三个 MinGW 运行时 DLL，约 5.6MB）——Windows 电脑装客户端算力时，`setup.ps1` 就是从服务端这份目录拉引擎的；应用时还会同步镜像一份到持久卷 `data/vibeasr/win-x64/`，容器重建后仍在。只有明确知道服务器上已有该目录时才用 `--no-vibeasr` 省掉。`scripts/build-vibeasr-package.js` 可单独出一个只含四件套的修复包。
+
 远程部署脚本 `scripts/deploy-package.mjs` 的目标地址与凭证全部走环境变量（`WB_URL` / `WB_USER` / `WB_PASS`），仓库内不含任何部署目标信息。
 
 ## 技术架构

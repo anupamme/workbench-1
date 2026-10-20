@@ -312,6 +312,21 @@ router.post('/upgrade/apply', applyUpload.single('file'), async (req, res) => {
       applied++;
     }
 
+    // vibeasr/ 额外镜像一份到持久卷（<data>/vibeasr/…，即 vibeasrPaths.clientFileList 的查找位置②）：
+    // 容器重建会清空可写层（2026-10-02 / 10-15 两次事故），引擎四件套只有落在 /data 才扛得住重建。
+    // 镜像失败不阻断升级（可写层那份已经生效），只记日志。
+    for (const s of staged) {
+      if (!s.rel.startsWith('vibeasr/')) continue;
+      try {
+        const src = path.join(ROOT, ...s.rel.split('/'));
+        const dst = path.join(dataDir, ...s.rel.split('/'));
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        fs.copyFileSync(src, dst);
+      } catch (e) {
+        console.warn(`[upgrade] vibeasr 镜像到持久目录失败（${s.rel}）：${e.message}`);
+      }
+    }
+
     // 上传的包留档 + 写应用日志 + 版本锚点
     const pkgName = `${localTs()}_applied_${String(meta.version).replace(/[\\/:*?"<>|\r\n]+/g, '_')}.zip`;
     fs.writeFileSync(path.join(PKG_DIR, pkgName), req.file.buffer);
